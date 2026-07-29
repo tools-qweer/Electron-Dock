@@ -101,6 +101,8 @@
 ## 尚未实现或尚未冻结
 
 - 稳定版公共 API、跨 Alpha 升级策略和主流框架适配层。
+- 挂入消费者已有 `BrowserWindow` 的 attach API，以及 Dockview 等第三方
+  布局框架的兼容适配层；当前 Alpha 只管理由库创建的完整 Dock 窗口。
 - 完整键盘无障碍、焦点遍历及屏幕阅读器语义。
 - macOS、Linux X11 和 Wayland 后端。
 
