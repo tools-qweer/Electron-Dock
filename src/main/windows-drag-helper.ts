@@ -19,6 +19,8 @@ export class WindowsDragHelper extends EventEmitter<WindowsDragHelperEvents> {
   readonly #executablePath: string;
   #child: ChildProcessWithoutNullStreams | null = null;
   #ready: Promise<void> | null = null;
+  #generation = 0;
+  readonly #expectedStops = new WeakSet<ChildProcessWithoutNullStreams>();
   #disposed = false;
 
   constructor(executablePath: string) {
@@ -38,17 +40,20 @@ export class WindowsDragHelper extends EventEmitter<WindowsDragHelperEvents> {
     await this.#sendWindowCommand("MONITOR", window);
   }
 
+  /**
+   * A native drag loop cannot consume another stdin command until the mouse
+   * button is released. Terminating that one helper process is therefore the
+   * only reliable out-of-band cancellation mechanism. The next operation
+   * starts a fresh helper lazily.
+   */
+  cancelActive(): void {
+    this.#stopCurrentChild();
+  }
+
   dispose(): void {
+    if (this.#disposed) return;
     this.#disposed = true;
-    const child = this.#child;
-    this.#child = null;
-    this.#ready = null;
-    if (child === null) return;
-    if (!child.killed) {
-      child.stdin.write("QUIT\n");
-      child.stdin.end();
-      child.kill();
-    }
+    this.#stopCurrentChild();
   }
 
   async #ensureStarted(): Promise<void> {
@@ -56,7 +61,8 @@ export class WindowsDragHelper extends EventEmitter<WindowsDragHelperEvents> {
       throw new Error("Windows drag helper is disposed");
     }
     if (this.#ready !== null) return this.#ready;
-    this.#ready = new Promise<void>((resolve, reject) => {
+    const generation = ++this.#generation;
+    const ready = new Promise<void>((resolve, reject) => {
       const child = spawn(this.#executablePath, [], {
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],
@@ -64,30 +70,59 @@ export class WindowsDragHelper extends EventEmitter<WindowsDragHelperEvents> {
       this.#child = child;
       const lines = readline.createInterface({ input: child.stdout });
       let resolved = false;
+      let settled = false;
+      const isCurrent = (): boolean => (
+        this.#child === child && this.#generation === generation
+      );
+      const resolveStartup = (): void => {
+        if (settled) return;
+        settled = true;
+        resolved = true;
+        resolve();
+      };
+      const rejectStartup = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+      const reportProcessError = (error: Error): void => {
+        if (!isCurrent() || this.#expectedStops.has(child)) return;
+        if (!resolved) {
+          this.#clearCurrentChild(child, generation);
+          rejectStartup(error);
+          return;
+        }
+        this.emit("error", error);
+      };
       lines.on("line", (line) => {
+        if (!isCurrent() || this.#expectedStops.has(child)) return;
         if (line === "READY") {
-          resolved = true;
-          resolve();
+          resolveStartup();
           return;
         }
         this.#handleLine(line);
       });
       child.stderr.on("data", (chunk) => {
-        this.emit("error", new Error(String(chunk)));
+        reportProcessError(new Error(String(chunk)));
+      });
+      child.stdin.on("error", (error) => {
+        reportProcessError(error);
       });
       child.once("error", (error) => {
-        if (!resolved) reject(error);
-        else this.emit("error", error);
+        reportProcessError(error);
       });
       child.once("exit", (code) => {
-        const wasCurrentChild = this.#child === child;
-        if (this.#child === child) {
-          this.#child = null;
-          this.#ready = null;
-        }
+        const wasCurrentChild = isCurrent();
+        const expected = this.#expectedStops.has(child);
+        if (wasCurrentChild) this.#clearCurrentChild(child, generation);
+        lines.close();
         if (!resolved) {
-          reject(new Error(`Windows drag helper exited with ${String(code)}`));
-        } else if (!this.#disposed && wasCurrentChild) {
+          rejectStartup(new Error(
+            expected
+              ? "Windows drag helper was cancelled before startup"
+              : `Windows drag helper exited with ${String(code)}`,
+          ));
+        } else if (!this.#disposed && !expected && wasCurrentChild) {
           this.emit(
             "error",
             new Error(`Windows drag helper exited unexpectedly with ${String(code)}`),
@@ -95,7 +130,8 @@ export class WindowsDragHelper extends EventEmitter<WindowsDragHelperEvents> {
         }
       });
     });
-    return this.#ready;
+    this.#ready = ready;
+    return ready;
   }
 
   async #sendWindowCommand(
@@ -112,7 +148,23 @@ export class WindowsDragHelper extends EventEmitter<WindowsDragHelperEvents> {
     const rawHandle = handle.length >= 8
       ? handle.readBigUInt64LE(0)
       : BigInt(handle.readUInt32LE(0));
-    child.stdin.write(`${command} ${rawHandle.toString(16)}\n`);
+    await new Promise<void>((resolve, reject) => {
+      if (this.#child !== child || this.#expectedStops.has(child)) {
+        reject(new Error("Windows drag helper was cancelled"));
+        return;
+      }
+      try {
+        child.stdin.write(
+          `${command} ${rawHandle.toString(16)}\n`,
+          (error?: Error | null) => {
+            if (error) reject(error);
+            else resolve();
+          },
+        );
+      } catch (error: unknown) {
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 
   #handleLine(line: string): void {
@@ -128,5 +180,32 @@ export class WindowsDragHelper extends EventEmitter<WindowsDragHelperEvents> {
     else if (kind === "RELEASE") this.emit("release", event);
     else if (kind === "CANCEL") this.emit("cancel", event);
     else this.emit("error", new Error(`Native drag helper error: ${line}`));
+  }
+
+  #stopCurrentChild(): void {
+    const child = this.#child;
+    if (child === null) return;
+    this.#expectedStops.add(child);
+    this.#child = null;
+    this.#ready = null;
+    ++this.#generation;
+    if (!child.killed) {
+      try {
+        child.kill();
+      } catch (error: unknown) {
+        process.stderr.write(
+          `Windows drag helper termination failed: ${String(error)}\n`,
+        );
+      }
+    }
+  }
+
+  #clearCurrentChild(
+    child: ChildProcessWithoutNullStreams,
+    generation: number,
+  ): void {
+    if (this.#child !== child || this.#generation !== generation) return;
+    this.#child = null;
+    this.#ready = null;
   }
 }

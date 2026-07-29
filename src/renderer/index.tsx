@@ -350,6 +350,13 @@ function Panel(): React.JSX.Element {
   window.__electronDockMutateForSmoke = () => {
     setCounter(37);
     setInputValue("smoke-state");
+    // Background or fully occluded Electron windows may throttle
+    // requestAnimationFrame for longer than the smoke deadline. The scroll
+    // container already exists here, so apply the mutation synchronously and
+    // repeat it on the next painted frame when one is available.
+    if (scrollerRef.current !== null) {
+      scrollerRef.current.scrollTop = 180;
+    }
     requestAnimationFrame(() => {
       if (scrollerRef.current !== null) {
         scrollerRef.current.scrollTop = 180;

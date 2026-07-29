@@ -306,14 +306,20 @@ export class DockPanelHost {
           Math.max(1, targetBounds.height),
         );
       }
-    } catch {
+    } catch (error: unknown) {
+      process.stderr.write(
+        `Electron Dock failed to create floating window for ${this.#panelId}: ${String(error)}\n`,
+      );
       return this.snapshot();
     }
 
     this.#detachFromMain();
     try {
       floatingWindow.contentView.addChildView(this.#view);
-    } catch {
+    } catch (error: unknown) {
+      process.stderr.write(
+        `Electron Dock failed to reparent panel ${this.#panelId}: ${String(error)}\n`,
+      );
       floatingWindow.setClosable(true);
       floatingWindow.close();
       this.#attachToMainIfVisible();

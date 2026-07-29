@@ -82,6 +82,9 @@
   `attachWorkspace()` 尚未返回时调用 `getPanelState()` 仍得到完整非空状态。
   初始化授权按精确 WebContents 与主 frame 校验，只开放状态读取；加载失败、
   同数值 ID 的新 WebContents 和 runtime 并发销毁均有撤权回归测试。
+- `0.2.0-alpha.3` 为 Windows 原生拖动链增加异步跨线程窗口定位、坐标去重、
+  30 秒 native 上限，以及 Main 侧的强制终止、旧 helper 事件隔离、懒重启和
+  窗口生命周期兜底；自动测试覆盖正常取消、失焦、超时、写入失败与重启。
 - 面板公开 preload 的 `getPanelState()` / `onPanelStateChanged()` 包含
   host、active、requestedVisible、实际 visible 和 WebContents ID；
   工作区隐藏或交互禁用时，

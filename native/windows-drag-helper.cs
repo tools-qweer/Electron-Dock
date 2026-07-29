@@ -10,6 +10,9 @@ internal static class WindowsDragHelper
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
+    private const uint SwpAsyncWindowPos = 0x4000;
+    private const int PollIntervalMilliseconds = 16;
+    private const int MaximumDragDurationMilliseconds = 30000;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Point
@@ -117,9 +120,23 @@ internal static class WindowsDragHelper
         uint initialDpi = TryGetWindowDpi(window);
         double anchorDipX = (cursor.X - rectangle.Left) * 96.0 / initialDpi;
         double anchorDipY = (cursor.Y - rectangle.Top) * 96.0 / initialDpi;
+        if (!IsPressed(VkLeftButton))
+        {
+            Emit("CANCEL", cursor.X, cursor.Y);
+            return;
+        }
+
+        int startedAt = Environment.TickCount;
+        int previousX = int.MinValue;
+        int previousY = int.MinValue;
         while (IsPressed(VkLeftButton))
         {
             if (IsPressed(VkEscape))
+            {
+                Emit("CANCEL", cursor.X, cursor.Y);
+                return;
+            }
+            if (ElapsedMilliseconds(startedAt) >= MaximumDragDurationMilliseconds)
             {
                 Emit("CANCEL", cursor.X, cursor.Y);
                 return;
@@ -139,6 +156,7 @@ internal static class WindowsDragHelper
             int anchorY = (int)Math.Round(anchorDipY * currentDpi / 96.0);
             if (
                 moveWindow
+                && (cursor.X != previousX || cursor.Y != previousY)
                 && !SetWindowPos(
                     window,
                     IntPtr.Zero,
@@ -146,19 +164,32 @@ internal static class WindowsDragHelper
                     cursor.Y - anchorY,
                     0,
                     0,
-                    SwpNoSize | SwpNoZOrder | SwpNoActivate
+                    SwpNoSize
+                        | SwpNoZOrder
+                        | SwpNoActivate
+                        | SwpAsyncWindowPos
                 )
             )
             {
                 Emit("ERROR", cursor.X, cursor.Y);
                 return;
             }
-            Emit("MOVE", cursor.X, cursor.Y);
-            Thread.Sleep(8);
+            if (cursor.X != previousX || cursor.Y != previousY)
+            {
+                previousX = cursor.X;
+                previousY = cursor.Y;
+                Emit("MOVE", cursor.X, cursor.Y);
+            }
+            Thread.Sleep(PollIntervalMilliseconds);
         }
 
         GetCursorPos(out cursor);
         Emit("RELEASE", cursor.X, cursor.Y);
+    }
+
+    private static int ElapsedMilliseconds(int startedAt)
+    {
+        return unchecked(Environment.TickCount - startedAt);
     }
 
     private static bool IsPressed(int virtualKey)

@@ -1,4 +1,4 @@
-import { BrowserWindow, screen } from "electron";
+import { BrowserWindow, screen, type BaseWindow } from "electron";
 import path from "node:path";
 import type { BeginPanelDragMessage } from "../shared/protocol.js";
 import type { DockPanelHost } from "./dock-host.js";
@@ -9,6 +9,7 @@ import {
 } from "./windows-drag-helper.js";
 
 type DragMode = "custom" | "system";
+const MAXIMUM_DRAG_DURATION_MS = 35_000;
 
 /**
  * One native cursor monitor coordinates every panel in the workspace.
@@ -23,8 +24,11 @@ export class NativeDragController {
   readonly #workspace: DockWorkspaceHost;
   readonly #helper: WindowsDragHelper;
   readonly #removeFloatingMoveListeners: (() => void)[] = [];
+  readonly #removeMainWindowLifecycleListeners: (() => void)[] = [];
+  readonly #removeActiveWindowLifecycleListeners: (() => void)[] = [];
   #mode: DragMode | null = null;
   #activePanelId: string | null = null;
+  #dragDeadline: ReturnType<typeof setTimeout> | null = null;
   #enabled = true;
   #disposed = false;
 
@@ -55,7 +59,25 @@ export class NativeDragController {
     });
     this.#helper.on("error", (error) => {
       process.stderr.write(`Native drag helper: ${error.message}\n`);
-      this.#finish(true);
+      this.#forceCancel();
+    });
+    const cancelAnyDrag = (): void => {
+      this.#forceCancel();
+    };
+    const cancelCustomDrag = (): void => {
+      if (this.#mode === "custom") this.#forceCancel();
+    };
+    mainWindow.on("hide", cancelAnyDrag);
+    mainWindow.on("minimize", cancelAnyDrag);
+    mainWindow.on("closed", cancelAnyDrag);
+    this.#removeMainWindowLifecycleListeners.push(
+      () => mainWindow.off("hide", cancelAnyDrag),
+      () => mainWindow.off("minimize", cancelAnyDrag),
+      () => mainWindow.off("closed", cancelAnyDrag),
+    );
+    mainWindow.on("blur", cancelCustomDrag);
+    this.#removeMainWindowLifecycleListeners.push(() => {
+      mainWindow.off("blur", cancelCustomDrag);
     });
     for (const host of workspace.hosts) {
       this.#removeFloatingMoveListeners.push(
@@ -95,33 +117,38 @@ export class NativeDragController {
 
     this.#mode = "custom";
     this.#activePanelId = message.panelId;
-    floatingHost.alignFloatingPointer(message.anchor, cursor);
-    floatingHost.setFloatingDragInteraction(true);
-    this.#workspace.setDragPreview(message.panelId, null);
     try {
+      this.#armDragLifecycle(floatingHost.floatingWindow);
+      floatingHost.alignFloatingPointer(message.anchor, cursor);
+      floatingHost.setFloatingDragInteraction(true);
+      this.#workspace.setDragPreview(message.panelId, null);
       await this.#helper.begin(floatingHost.floatingWindow);
     } catch (error) {
       process.stderr.write(`Native drag start failed: ${String(error)}\n`);
-      this.#finish(true);
+      this.#forceCancel();
     }
   }
 
   setInteractionEnabled(enabled: boolean): void {
     if (this.#disposed || this.#enabled === enabled) return;
     this.#enabled = enabled;
-    if (!enabled) this.#finish(true);
+    if (!enabled) this.#forceCancel();
   }
 
   dispose(): void {
     if (this.#disposed) return;
+    this.#forceCancel();
     this.#disposed = true;
-    this.#mode = null;
-    this.#activePanelId = null;
+    this.#clearDragLifecycle();
     this.#workspace.clearDragPreview();
     for (const removeListener of this.#removeFloatingMoveListeners) {
       removeListener();
     }
     this.#removeFloatingMoveListeners.length = 0;
+    for (const removeListener of this.#removeMainWindowLifecycleListeners) {
+      removeListener();
+    }
+    this.#removeMainWindowLifecycleListeners.length = 0;
     this.#helper.dispose();
   }
 
@@ -141,6 +168,7 @@ export class NativeDragController {
     if (mode === null || panelId === null) return;
     this.#mode = null;
     this.#activePanelId = null;
+    this.#clearDragLifecycle();
 
     const host = this.#workspace.hostByPanelId(panelId);
     const point = event === undefined
@@ -179,19 +207,59 @@ export class NativeDragController {
     }
     this.#mode = "system";
     this.#activePanelId = host.panelId;
-    this.#workspace.setDragPreview(
-      host.panelId,
-      this.#workspace.dropResolutionAt(
-        screen.getCursorScreenPoint(),
-        host.panelId,
-      ),
-    );
     try {
+      this.#armDragLifecycle(host.floatingWindow);
+      this.#workspace.setDragPreview(
+        host.panelId,
+        this.#workspace.dropResolutionAt(
+          screen.getCursorScreenPoint(),
+          host.panelId,
+        ),
+      );
       await this.#helper.monitor(host.floatingWindow);
     } catch (error) {
       process.stderr.write(`Native titlebar monitor failed: ${String(error)}\n`);
-      this.#finish(true);
+      this.#forceCancel();
     }
+  }
+
+  #forceCancel(): void {
+    if (this.#mode === null) return;
+    this.#helper.cancelActive();
+    this.#finish(true);
+  }
+
+  #armDragLifecycle(window: BaseWindow): void {
+    this.#clearDragLifecycle();
+    const cancel = (): void => {
+      this.#forceCancel();
+    };
+    window.on("blur", cancel);
+    window.on("hide", cancel);
+    window.on("minimize", cancel);
+    window.on("closed", cancel);
+    this.#removeActiveWindowLifecycleListeners.push(
+      () => window.off("blur", cancel),
+      () => window.off("hide", cancel),
+      () => window.off("minimize", cancel),
+      () => window.off("closed", cancel),
+    );
+    this.#dragDeadline = setTimeout(() => {
+      process.stderr.write("Native drag helper exceeded its maximum duration\n");
+      this.#forceCancel();
+    }, MAXIMUM_DRAG_DURATION_MS);
+    this.#dragDeadline.unref();
+  }
+
+  #clearDragLifecycle(): void {
+    if (this.#dragDeadline !== null) {
+      clearTimeout(this.#dragDeadline);
+      this.#dragDeadline = null;
+    }
+    for (const removeListener of this.#removeActiveWindowLifecycleListeners) {
+      removeListener();
+    }
+    this.#removeActiveWindowLifecycleListeners.length = 0;
   }
 
   #toDipPoint(event: NativeCursorEvent): Electron.Point {

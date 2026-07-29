@@ -9,7 +9,7 @@ const packageJson = JSON.parse(
 
 const expected = {
   name: "@tools-qweer/electron-dock",
-  version: "0.2.0-alpha.2",
+  version: "0.2.0-alpha.3",
   license: "MIT",
 };
 

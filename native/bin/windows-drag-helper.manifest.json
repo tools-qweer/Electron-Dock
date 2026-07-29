@@ -3,6 +3,6 @@
   "target": "win32-x64",
   "source": "../windows-drag-helper.cs",
   "binary": "windows-drag-helper.exe",
-  "sourceSha256": "8ffcc1243e181faa7e3b86737dbc87ffa1a086d4433c94e54891611e0378b513",
-  "binarySha256": "20d35e54300328787b3991644774860cc6a7d46bdb2d0d9bf01690c9944f5518"
+  "sourceSha256": "df6a3b81ed7645ed159b84bb429228689f39d266f1d1d0a4a02a71f6679e4ce5",
+  "binarySha256": "c2f9f18a15628a90a6fe685b17d268684e1cab571fa80f92d012f213bcbab686"
 }

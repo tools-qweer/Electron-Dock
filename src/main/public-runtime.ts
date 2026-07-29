@@ -313,7 +313,9 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     ) {
       return;
     }
-    void entry.dragController.begin(value);
+    void entry.dragController.begin(value).catch((error: unknown) => {
+      process.stderr.write(`Electron Dock panel drag rejected: ${String(error)}\n`);
+    });
   };
 
   constructor(onDisposed: () => void) {
