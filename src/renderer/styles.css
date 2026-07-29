@@ -1,0 +1,310 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  background: #101313;
+  color: #eceff0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+html[data-mode="overlay"],
+html[data-mode="overlay"] body,
+html[data-mode="overlay"] #root {
+  background: transparent;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 1px solid #31524c;
+  border-radius: 4px;
+  padding: 7px 14px;
+  background: #173a34;
+  color: #e6fffa;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #00d7b4;
+  background: #1b4b42;
+}
+
+.dock-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #101313;
+}
+
+.dock-topbar {
+  position: absolute;
+  z-index: 10;
+  inset: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 44px;
+  padding: 0 14px;
+  border-bottom: 1px solid #303636;
+  background: #151919;
+  user-select: none;
+}
+
+.dock-topbar strong {
+  color: #f2f6f5;
+  font-size: 14px;
+}
+
+.dock-topbar span {
+  color: #81908e;
+  font-size: 12px;
+}
+
+.dock-surface {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.dock-loading {
+  position: absolute;
+  inset: 44px 0 0;
+  display: grid;
+  place-items: center;
+  color: #788684;
+}
+
+.dock-titlebar,
+.dock-tabs,
+.dock-splitter {
+  position: absolute;
+  z-index: 4;
+  pointer-events: auto;
+}
+
+.dock-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid #2b3332;
+  border-bottom-color: #242b2a;
+  background: #181d1c;
+  color: #dce5e3;
+  cursor: grab;
+  user-select: none;
+}
+
+.dock-titlebar:active {
+  cursor: grabbing;
+}
+
+.dock-titlebar > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dock-grip {
+  color: #5d6a68;
+  font-size: 14px;
+}
+
+.dock-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  min-width: 0;
+  padding: 2px 4px 0;
+  border: 1px solid #2b3332;
+  background: #141817;
+}
+
+.dock-tab {
+  min-width: 76px;
+  height: 100%;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 3px 3px 0 0;
+  background: transparent;
+  color: #82908e;
+  font-size: 12px;
+}
+
+.dock-tab:hover {
+  border: 0;
+  background: #1c2422;
+  color: #cbd5d3;
+}
+
+.dock-tab--active,
+.dock-tab--active:hover {
+  background: #234d45;
+  color: #00ffcc;
+}
+
+.dock-splitter {
+  z-index: 6;
+  background: #0b0e0e;
+  touch-action: none;
+  user-select: none;
+}
+
+.dock-splitter::after {
+  position: absolute;
+  content: "";
+  background: transparent;
+  transition: background 100ms ease;
+}
+
+.dock-splitter--horizontal {
+  cursor: col-resize;
+}
+
+.dock-splitter--horizontal::after {
+  inset: 0 -3px;
+}
+
+.dock-splitter--vertical {
+  cursor: row-resize;
+}
+
+.dock-splitter--vertical::after {
+  inset: -3px 0;
+}
+
+.dock-splitter:hover::after,
+.dock-splitter:active::after {
+  background: #303030;
+}
+
+.panel-content {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  width: 100%;
+  height: 100%;
+  background: #151919;
+}
+
+.state-proof {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto minmax(140px, 240px);
+  gap: 14px;
+  align-items: end;
+  padding: 14px;
+  border-bottom: 1px solid #303636;
+}
+
+.state-proof label {
+  display: grid;
+  gap: 6px;
+  color: #9eaaaa;
+  font-size: 13px;
+}
+
+.state-proof input {
+  width: 100%;
+  border: 1px solid #364242;
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: #111515;
+  color: #edf3f2;
+}
+
+.counter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.counter-row output {
+  min-width: 42px;
+  color: #00ffcc;
+  font-weight: 700;
+  text-align: center;
+}
+
+canvas {
+  width: 100%;
+  max-width: 240px;
+  height: 64px;
+  border: 1px solid #335049;
+  border-radius: 4px;
+}
+
+.scroll-proof {
+  overflow: auto;
+  padding: 10px 16px 32px;
+  color: #9caaa8;
+}
+
+.scroll-proof div {
+  border-bottom: 1px solid #242b2b;
+  padding: 9px 2px;
+}
+
+.dock-overlay {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  pointer-events: none;
+}
+
+.dock-overlay[aria-hidden="true"] {
+  display: none;
+}
+
+.dock-placement-preview {
+  position: absolute;
+  z-index: 1;
+  border: 2px solid #70bcea;
+  border-radius: 2px;
+  background: #37556c;
+  box-shadow:
+    inset 0 0 0 1px rgb(200 232 250 / 24%),
+    0 0 10px rgb(76 166 220 / 28%);
+  transition:
+    left 90ms ease,
+    top 90ms ease,
+    width 90ms ease,
+    height 90ms ease;
+}
+
+.dock-placement-preview--tab-merge {
+  /*
+   * A center drop merges the floating panel into the target dock as a tab.
+   * Keep the existing target contents visible, matching QMainWindow's
+   * translucent tab-merge feedback. Edge drops intentionally remain opaque
+   * because they preview a genuinely new empty dock slot.
+   */
+  background: rgb(55 85 108 / 68%);
+}
+
+@media (max-width: 820px) {
+  .state-proof {
+    grid-template-columns: 1fr auto;
+  }
+
+  canvas {
+    display: none;
+  }
+}

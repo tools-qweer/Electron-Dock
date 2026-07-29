@@ -1,0 +1,104 @@
+{
+  "name": "@tools-qweer/electron-dock",
+  "version": "0.1.0-alpha.1",
+  "description": "Windows x64 native docking primitives for Electron WebContentsView panels.",
+  "license": "MIT",
+  "author": "tools-qweer contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tools-qweer/Electron-Dock.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tools-qweer/Electron-Dock/issues"
+  },
+  "homepage": "https://github.com/tools-qweer/Electron-Dock#readme",
+  "keywords": [
+    "electron",
+    "dock",
+    "docking",
+    "webcontentsview",
+    "windows"
+  ],
+  "type": "module",
+  "main": "./dist/public/index.js",
+  "types": "./dist/types/public/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/public/index.d.ts",
+      "import": "./dist/public/index.js",
+      "default": "./dist/public/index.js"
+    },
+    "./core": {
+      "types": "./dist/types/core/index.d.ts",
+      "import": "./dist/core/index.js",
+      "default": "./dist/core/index.js"
+    },
+    "./preload": {
+      "types": "./dist/types/preload/public.d.ts",
+      "require": "./dist/preload/public.cjs",
+      "default": "./dist/preload/public.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/public/",
+    "dist/core/",
+    "dist/preload/public.cjs",
+    "dist/preload/internal.cjs",
+    "dist/preload/internal.cjs.map",
+    "dist/types/",
+    "dist/native/",
+    "dist/renderer/",
+    "native/windows-drag-helper.cs",
+    "native/bin/windows-drag-helper.exe",
+    "native/bin/windows-drag-helper.manifest.json",
+    "docs/",
+    "LICENSE",
+    "README.md"
+  ],
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "electron:ensure": "node scripts/ensure-electron.mjs",
+    "start": "npm run electron:ensure && npm run build && electron dist/demo/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "typecheck:types": "tsc -p tsconfig.types.json --emitDeclarationOnly --pretty false",
+    "test": "vitest run",
+    "smoke:reparent": "npm run electron:ensure && npm run build && node scripts/smoke.mjs",
+    "smoke": "npm run smoke:reparent",
+    "check": "npm run typecheck && npm test && npm run smoke:reparent",
+    "package:check": "node scripts/package-check.mjs",
+    "package:consumer": "node scripts/package-consumer.mjs",
+    "package:consumer:electron": "node scripts/package-consumer.mjs --electron",
+    "pack:dry-run": "npm pack --dry-run --json",
+    "native:refresh-fallback": "node scripts/refresh-native-helper-fallback.mjs",
+    "prepare": "npm run build",
+    "prepack": "npm run build && npm run package:check"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "peerDependencies": {
+    "electron": "^43.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "electron": "43.1.1",
+    "esbuild": "0.28.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}
