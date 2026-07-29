@@ -20,6 +20,10 @@ import type {
 
 const parameters = new URLSearchParams(location.search);
 const mode = parameters.get("mode") ?? "shell";
+const shellHeaderHeight = Math.max(
+  0,
+  Number(parameters.get("shellHeaderHeight") ?? "44") || 0,
+);
 // Matches QStyleHints.startDragDistance() in the reference PyQt runtime.
 // Qt uses Manhattan distance for drag activation rather than Euclidean
 // distance, which matters most during diagonal movement.
@@ -63,11 +67,23 @@ function Shell(): React.JSX.Element {
   ), [workspace?.panels]);
 
   return (
-    <main className="dock-shell">
-      <header className="dock-topbar">
-        <strong>Electron Dock</strong>
-        <span>Windows 原生多面板停靠运行时</span>
-      </header>
+    <main
+      className={[
+        "dock-shell",
+        workspace?.interactionEnabled === false
+          ? "dock-shell--interaction-disabled"
+          : "",
+      ].filter(Boolean).join(" ")}
+      style={{
+        "--dock-shell-header-height": `${shellHeaderHeight}px`,
+      } as React.CSSProperties}
+    >
+      {shellHeaderHeight > 0 ? (
+        <header className="dock-topbar">
+          <strong>Electron Dock</strong>
+          <span>Windows 原生多面板停靠运行时</span>
+        </header>
+      ) : null}
       <section className="dock-surface" aria-label="停靠工作区">
         {workspace === null ? (
           <div className="dock-loading">正在载入工作区…</div>

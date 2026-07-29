@@ -74,6 +74,19 @@
 - 主窗口关闭前先终止拖动辅助进程并拆除持久 View。
 - 内置演示主窗口与浮窗不会继承 Electron 默认的英文应用菜单；正式接入时由
   宿主应用自行管理主菜单，Dock 浮窗不额外增加菜单栏。
+- `0.2.0-alpha.1` 的真实 tgz 消费者已把独立 Shell 工作区挂入已有
+  `BrowserWindow`，并验证宿主 WebContents ID、URL、页面运行时状态、菜单、
+  close 监听和窗口生命期均未被接管。bounds、显隐、交互开关、面板状态、
+  浮出/停靠、sender 预登记和独立 dispose 已贯通。
+- 面板公开 preload 的 `getPanelState()` / `onPanelStateChanged()` 包含
+  host、active、requestedVisible、实际 visible 和 WebContents ID；
+  工作区隐藏或交互禁用时，
+  面板自行发起的 float/redock 会被主进程拒绝。
+- 原子写失败会保留到 `flush()` / `dispose()` 并向调用方抛出；更新后的完整
+  布局成功写入后才会清除已被覆盖的旧失败。
+- Windows helper 使用 Framework64 C# 编译器并显式指定
+  `/platform:x64`；tracked fallback、构建产物和 tgz 安装结果均校验 PE
+  Machine 为 AMD64 `0x8664`。
 
 以上自动检查只能证明可重复断言的状态、几何、IPC、持久化和资源不变量。
 它不能证明鼠标锚点没有细微跳动、临时腾位动画与 Qt 一致、半透明高亮视觉
@@ -101,8 +114,8 @@
 ## 尚未实现或尚未冻结
 
 - 稳定版公共 API、跨 Alpha 升级策略和主流框架适配层。
-- 挂入消费者已有 `BrowserWindow` 的 attach API，以及 Dockview 等第三方
-  布局框架的兼容适配层；当前 Alpha 只管理由库创建的完整 Dock 窗口。
+- 已有 `BrowserWindow` 的 `attachWorkspace()` 已进入 Alpha；Dockview 等
+  第三方布局框架的兼容适配层仍未实现。
 - 完整键盘无障碍、焦点遍历及屏幕阅读器语义。
 - macOS、Linux X11 和 Wayland 后端。
 

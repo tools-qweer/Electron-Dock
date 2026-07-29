@@ -25,6 +25,7 @@ export class NativeDragController {
   readonly #removeFloatingMoveListeners: (() => void)[] = [];
   #mode: DragMode | null = null;
   #activePanelId: string | null = null;
+  #enabled = true;
   #disposed = false;
 
   constructor(
@@ -70,7 +71,7 @@ export class NativeDragController {
   }
 
   async begin(message: BeginPanelDragMessage): Promise<void> {
-    if (this.#disposed || this.#mode !== null) return;
+    if (!this.#enabled || this.#disposed || this.#mode !== null) return;
     const host = this.#workspace.hostByPanelId(message.panelId);
     if (host === null || host.host !== "docked") return;
 
@@ -103,6 +104,12 @@ export class NativeDragController {
       process.stderr.write(`Native drag start failed: ${String(error)}\n`);
       this.#finish(true);
     }
+  }
+
+  setInteractionEnabled(enabled: boolean): void {
+    if (this.#disposed || this.#enabled === enabled) return;
+    this.#enabled = enabled;
+    if (!enabled) this.#finish(true);
   }
 
   dispose(): void {
@@ -162,6 +169,7 @@ export class NativeDragController {
   async #beginSystemMoveMonitor(host: DockPanelHost): Promise<void> {
     if (
       this.#disposed
+      || !this.#enabled
       || this.#mode !== null
       || host.host !== "floating"
       || host.floatingWindow === null

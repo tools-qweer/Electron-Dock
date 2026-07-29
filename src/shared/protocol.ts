@@ -16,6 +16,8 @@ export const IPC = {
   panelSnapshot: "electron-dock:panel-snapshot",
   hostChanged: "electron-dock:host-changed",
   getHostState: "electron-dock:get-host-state",
+  panelStateChanged: "electron-dock:panel-state-changed",
+  getPanelState: "electron-dock:get-panel-state",
   beginPanelDrag: "electron-dock:begin-panel-drag",
   dragPreview: "electron-dock:drag-preview",
 } as const;
@@ -26,6 +28,7 @@ export interface WorkspaceStateMessage {
   readonly panels: readonly DockPanelDefinition[];
   readonly layout: DockLayoutState;
   readonly geometry: DockLayoutGeometry;
+  readonly interactionEnabled: boolean;
 }
 
 export interface SetActivePanelMessage {
@@ -51,6 +54,22 @@ export interface PanelSnapshot {
 export interface HostChangedMessage {
   readonly panelId: string;
   readonly host: DockHostKind;
+  readonly webContentsId: number;
+}
+
+export interface PanelStateMessage {
+  readonly panelId: string;
+  readonly host: DockHostKind;
+  readonly active: boolean;
+  /**
+   * Stable user visibility preference controlled by setPanelVisible().
+   * Unlike visible, this does not become false merely for an inactive tab.
+   */
+  readonly requestedVisible: boolean;
+  /**
+   * Whether the panel is currently rendered to the user.
+   */
+  readonly visible: boolean;
   readonly webContentsId: number;
 }
 

@@ -39,12 +39,15 @@ describe("Electron Dock preload API boundaries", () => {
     expect(Object.keys(api).sort()).toEqual([
       "floatPanel",
       "getHostState",
+      "getPanelState",
       "onHostChanged",
+      "onPanelStateChanged",
       "readPanelSnapshot",
       "redockPanel",
     ]);
 
     await api.getHostState();
+    await api.getPanelState();
     await api.floatPanel({ x: 1, y: 2, width: 320, height: 240 });
     await api.redockPanel();
     await api.readPanelSnapshot();
@@ -55,11 +58,15 @@ describe("Electron Dock preload API boundaries", () => {
     );
     expect(electronMocks.invoke).toHaveBeenNthCalledWith(
       2,
+      IPC.getPanelState,
+    );
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(
+      3,
       IPC.floatPanel,
       { x: 1, y: 2, width: 320, height: 240 },
     );
-    expect(electronMocks.invoke).toHaveBeenNthCalledWith(3, IPC.redockPanel);
-    expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, IPC.panelSnapshot);
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, IPC.redockPanel);
+    expect(electronMocks.invoke).toHaveBeenNthCalledWith(5, IPC.panelSnapshot);
   });
 
   it("keeps workspace, resize and drag authority in the internal preload", () => {
@@ -69,9 +76,11 @@ describe("Electron Dock preload API boundaries", () => {
       "beginPanelDrag",
       "floatPanel",
       "getHostState",
+      "getPanelState",
       "getWorkspaceState",
       "onDragPreview",
       "onHostChanged",
+      "onPanelStateChanged",
       "onWorkspaceState",
       "readPanelSnapshot",
       "redockPanel",

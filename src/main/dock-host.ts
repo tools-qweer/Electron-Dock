@@ -2,6 +2,7 @@ import {
   BaseWindow,
   BrowserWindow,
   screen,
+  type WebContents,
   WebContentsView,
   type Rectangle,
   type WebPreferences,
@@ -13,6 +14,7 @@ import {
   IPC,
   type DockHostKind,
   type HostChangedMessage,
+  type PanelStateMessage,
   sanitizeRectangle,
 } from "../shared/protocol.js";
 
@@ -51,6 +53,7 @@ export interface DockPanelHostSnapshot {
   readonly panelId: string;
   readonly webContentsId: number;
   readonly host: DockHostKind;
+  readonly visible: boolean;
   readonly hasFloatingWindow: boolean;
 }
 
@@ -78,6 +81,8 @@ export class DockPanelHost {
   readonly #rendererUrl: string;
   #dockedBounds: Rectangle = { x: 0, y: 0, width: 1, height: 1 };
   #dockedVisible = true;
+  #workspaceVisible = true;
+  #panelVisible = true;
   #attachedToMain = false;
   #floatingWindow: BaseWindow | null = null;
   #host: DockHostKind = "docked";
@@ -126,6 +131,10 @@ export class DockPanelHost {
     return this.#view.webContents.id;
   }
 
+  get webContents(): WebContents {
+    return this.#view.webContents;
+  }
+
   get panelId(): string {
     return this.#panelId;
   }
@@ -140,6 +149,16 @@ export class DockPanelHost {
 
   get rendererUrl(): string {
     return this.#rendererUrl;
+  }
+
+  get visible(): boolean {
+    if (!this.#workspaceVisible || !this.#panelVisible) return false;
+    if (this.#host === "floating") {
+      return this.#floatingWindow !== null
+        && !this.#floatingWindow.isDestroyed()
+        && this.#floatingWindow.isVisible();
+    }
+    return this.#attachedToMain && this.#dockedVisible;
   }
 
   get floatingBounds(): Rectangle | null {
@@ -187,6 +206,29 @@ export class DockPanelHost {
       this.#view.setBounds(this.#dockedBounds);
     } else {
       this.#detachFromMain();
+    }
+  }
+
+  setWorkspaceVisible(visible: boolean): void {
+    if (this.#workspaceVisible === visible) return;
+    this.#workspaceVisible = visible;
+    this.#syncVisibility();
+  }
+
+  setPanelVisible(visible: boolean): void {
+    if (this.#panelVisible === visible) return;
+    this.#panelVisible = visible;
+    this.#syncVisibility();
+  }
+
+  focusFloating(): void {
+    const floatingWindow = this.#floatingWindow;
+    if (
+      floatingWindow !== null
+      && !floatingWindow.isDestroyed()
+      && floatingWindow.isVisible()
+    ) {
+      floatingWindow.focus();
     }
   }
 
@@ -296,6 +338,7 @@ export class DockPanelHost {
       floatingWindow.setIgnoreMouseEvents(true);
     }
     floatingWindow.show();
+    this.#syncVisibility();
     this.#notifyHostChanged();
     return this.snapshot();
   }
@@ -355,6 +398,7 @@ export class DockPanelHost {
       panelId: this.#panelId,
       webContentsId: this.#view.webContents.id,
       host: this.#host,
+      visible: this.visible,
       hasFloatingWindow: this.#floatingWindow !== null
         && !this.#floatingWindow.isDestroyed(),
     };
@@ -365,6 +409,12 @@ export class DockPanelHost {
       "globalThis.__electronDockReadSnapshot?.()",
       true,
     );
+  }
+
+  notifyPanelState(message: PanelStateMessage): void {
+    if (!this.#view.webContents.isDestroyed()) {
+      this.#view.webContents.send(IPC.panelStateChanged, message);
+    }
   }
 
   async prepareSmokeRuntimeState(): Promise<void> {
@@ -465,6 +515,8 @@ export class DockPanelHost {
   #attachToMainIfVisible(): void {
     if (
       !this.#dockedVisible
+      || !this.#workspaceVisible
+      || !this.#panelVisible
       || this.#attachedToMain
       || this.#mainWindow.isDestroyed()
       || this.#view.webContents.isDestroyed()
@@ -480,6 +532,29 @@ export class DockPanelHost {
     if (!this.#attachedToMain || this.#mainWindow.isDestroyed()) return;
     this.#mainWindow.contentView.removeChildView(this.#view);
     this.#attachedToMain = false;
+  }
+
+  #syncVisibility(): void {
+    if (this.#host === "docked") {
+      if (
+        this.#dockedVisible
+        && this.#workspaceVisible
+        && this.#panelVisible
+      ) {
+        this.#attachToMainIfVisible();
+      } else {
+        this.#detachFromMain();
+      }
+      return;
+    }
+
+    const floatingWindow = this.#floatingWindow;
+    if (floatingWindow === null || floatingWindow.isDestroyed()) return;
+    if (this.#workspaceVisible && this.#panelVisible) {
+      floatingWindow.show();
+    } else {
+      floatingWindow.hide();
+    }
   }
 }
 

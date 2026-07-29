@@ -13,6 +13,7 @@ import path from "node:path";
 
 const HELPER_NAME = "windows-drag-helper.exe";
 const MANIFEST_NAME = "windows-drag-helper.manifest.json";
+const PE_MACHINE_AMD64 = 0x8664;
 
 export async function buildNativeHelper(root, dist) {
   if (process.platform !== "win32") return;
@@ -55,6 +56,7 @@ export async function buildNativeHelper(root, dist) {
         + `(${manifest.binarySha256.slice(0, 12)}...)\n`,
       );
     }
+    await verifyX64PortableExecutable(temporaryOutput);
     await replaceOutput(temporaryOutput, output);
   } catch (error) {
     await rm(temporaryOutput, { force: true });
@@ -83,6 +85,7 @@ export async function refreshNativeHelperFallback(root) {
   await rm(temporaryOutput, { force: true });
   try {
     await compileHelper(compiler, paths.source, temporaryOutput, root);
+    await verifyX64PortableExecutable(temporaryOutput);
     await replaceOutput(temporaryOutput, paths.fallback);
     const manifest = {
       schemaVersion: 1,
@@ -135,6 +138,7 @@ async function compileHelper(compiler, source, output, cwd) {
         "/nologo",
         "/optimize+",
         "/target:exe",
+        "/platform:x64",
         `/out:${output}`,
         source,
       ],
@@ -189,7 +193,38 @@ export async function verifyTrackedNativeHelper(root) {
       + "Run `npm run native:refresh-fallback` on Windows with csc.exe available.",
     );
   }
+  await verifyX64PortableExecutable(paths.fallback);
   return manifest;
+}
+
+export async function readPortableExecutableMachine(filePath) {
+  const bytes = await readFile(filePath);
+  if (bytes.length < 0x40 || bytes[0] !== 0x4d || bytes[1] !== 0x5a) {
+    throw new Error(`Native helper is not a valid MZ executable: ${filePath}`);
+  }
+  const peOffset = bytes.readUInt32LE(0x3c);
+  if (
+    peOffset < 0
+    || peOffset + 6 > bytes.length
+    || bytes[peOffset] !== 0x50
+    || bytes[peOffset + 1] !== 0x45
+    || bytes[peOffset + 2] !== 0
+    || bytes[peOffset + 3] !== 0
+  ) {
+    throw new Error(`Native helper has an invalid PE header: ${filePath}`);
+  }
+  return bytes.readUInt16LE(peOffset + 4);
+}
+
+async function verifyX64PortableExecutable(filePath) {
+  const machine = await readPortableExecutableMachine(filePath);
+  if (machine !== PE_MACHINE_AMD64) {
+    throw new Error(
+      `Windows drag helper must target PE AMD64 (0x8664); received `
+      + `0x${machine.toString(16).padStart(4, "0")} at ${filePath}. `
+      + "Run `npm run native:refresh-fallback` with Framework64 csc.exe.",
+    );
+  }
 }
 
 async function sha256(filePath) {

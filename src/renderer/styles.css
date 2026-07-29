@@ -57,7 +57,7 @@ button:hover {
   display: flex;
   align-items: center;
   gap: 14px;
-  height: 44px;
+  height: var(--dock-shell-header-height, 44px);
   padding: 0 14px;
   border-bottom: 1px solid #303636;
   background: #151919;
@@ -82,10 +82,16 @@ button:hover {
 
 .dock-loading {
   position: absolute;
-  inset: 44px 0 0;
+  inset: var(--dock-shell-header-height, 44px) 0 0;
   display: grid;
   place-items: center;
   color: #788684;
+}
+
+.dock-shell--interaction-disabled .dock-titlebar,
+.dock-shell--interaction-disabled .dock-tabs,
+.dock-shell--interaction-disabled .dock-splitter {
+  pointer-events: none;
 }
 
 .dock-titlebar,

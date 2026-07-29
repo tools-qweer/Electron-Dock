@@ -1,8 +1,10 @@
 import {
   createElectronDockRuntime,
   type ElectronDockRuntime,
+  type ElectronDockWorkspaceOptions,
   type ElectronDockWindowOptions,
 } from "@tools-qweer/electron-dock";
+import type { BrowserWindow } from "electron";
 import {
   createDockLayout,
   createTabsNode,
@@ -12,6 +14,7 @@ import {
 import {
   createElectronDockPreloadApi,
   type ElectronDockPreloadApi,
+  type PanelStateMessage,
 } from "@tools-qweer/electron-dock/preload";
 
 const panels: readonly DockPanelDefinition[] = [
@@ -23,15 +26,28 @@ const layout: DockLayoutState = createDockLayout(
 const runtimeFactory: () => ElectronDockRuntime = createElectronDockRuntime;
 const preloadFactory: () => ElectronDockPreloadApi =
   createElectronDockPreloadApi;
+const panelStateIdentity = (state: PanelStateMessage): PanelStateMessage =>
+  state;
 const windowOptions: ElectronDockWindowOptions = {
   id: "consumer-window",
   panels,
   initialLayout: layout,
 };
+declare const ownerWindow: BrowserWindow;
+const workspaceOptions: ElectronDockWorkspaceOptions = {
+  id: "consumer-workspace",
+  window: ownerWindow,
+  bounds: { x: 20, y: 30, width: 800, height: 600 },
+  panels,
+  initialLayout: layout,
+};
+const attachWorkspace = runtimeFactory().attachWorkspace;
 
 declare const panelApi: ElectronDockPreloadApi;
 const hostState = panelApi.getHostState;
 const hostChanges = panelApi.onHostChanged;
+const panelState = panelApi.getPanelState;
+const panelStateChanges = panelApi.onPanelStateChanged;
 const floatPanel = panelApi.floatPanel;
 const redockPanel = panelApi.redockPanel;
 const readPanelSnapshot = panelApi.readPanelSnapshot;
@@ -45,9 +61,14 @@ panelApi.beginPanelDrag;
 
 void runtimeFactory;
 void preloadFactory;
+void panelStateIdentity;
 void windowOptions;
+void workspaceOptions;
+void attachWorkspace;
 void hostState;
 void hostChanges;
+void panelState;
+void panelStateChanges;
 void floatPanel;
 void redockPanel;
 void readPanelSnapshot;

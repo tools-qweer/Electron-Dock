@@ -1,4 +1,9 @@
-import { BrowserWindow, screen, WebContentsView } from "electron";
+import {
+  BrowserWindow,
+  screen,
+  WebContentsView,
+  type WebContents,
+} from "electron";
 import { pathToFileURL } from "node:url";
 import {
   computeDockInsertionRatio,
@@ -11,6 +16,7 @@ import {
 import {
   dockPanel as reduceDockPanel,
   floatPanel as reduceFloatPanel,
+  removePanel,
   setActivePanel,
   setSplitRatio,
   type DockPanelInsertionOptions,
@@ -31,6 +37,7 @@ import type {
 import {
   IPC,
   type DragPreviewMessage,
+  type PanelStateMessage,
   type WorkspaceStateMessage,
 } from "../shared/protocol.js";
 import {
@@ -38,6 +45,7 @@ import {
   type DockPanelContentOptions,
 } from "./dock-host.js";
 import { AtomicLayoutTextStorage } from "./layout-file-storage.js";
+import { PersistenceWriteQueue } from "./persistence-write-queue.js";
 
 const SHELL_HEIGHT = 44;
 const SPLITTER_THICKNESS = 5;
@@ -75,6 +83,37 @@ export interface DockWorkspaceHostOptions {
    */
   readonly storage?: AtomicLayoutTextStorageContract;
   readonly layoutFilePath?: string;
+  /**
+   * Creates a library-owned shell WebContentsView inside an existing window.
+   *
+   * When omitted, the legacy demo mode renders the shell in the owner
+   * BrowserWindow webContents. Public runtime consumers always use an
+   * independent shell view so the owner document is never reloaded.
+   */
+  readonly shellView?: {
+    readonly bounds: Rectangle;
+    readonly headerHeight?: number;
+    readonly followWindowContentBounds?: boolean;
+    readonly visible?: boolean;
+    readonly interactionEnabled?: boolean;
+  };
+  readonly onPanelWebContentsCreated?: (
+    panelId: PanelId,
+    webContents: WebContents,
+  ) => void;
+  readonly onPanelWebContentsDisposed?: (
+    panelId: PanelId,
+    webContentsId: number,
+  ) => void;
+}
+
+export interface DockWorkspacePanelState {
+  readonly panelId: PanelId;
+  readonly host: "docked" | "floating";
+  readonly active: boolean;
+  readonly requestedVisible: boolean;
+  readonly visible: boolean;
+  readonly webContentsId: number;
 }
 
 /**
@@ -97,6 +136,16 @@ export class DockWorkspaceHost {
     Record<PanelId, DockPanelMinimumSize | undefined>
   >;
   readonly #hosts = new Map<PanelId, DockPanelHost>();
+  readonly #panelVisibility = new Map<PanelId, boolean>();
+  readonly #changeListeners = new Set<() => void>();
+  readonly #shellView: WebContentsView | null;
+  readonly #shellRendererUrl: string | null;
+  readonly #shellHeaderHeight: number;
+  readonly #followWindowContentBounds: boolean;
+  readonly #onPanelWebContentsCreated:
+    DockWorkspaceHostOptions["onPanelWebContentsCreated"];
+  readonly #onPanelWebContentsDisposed:
+    DockWorkspaceHostOptions["onPanelWebContentsDisposed"];
   readonly #overlayView: WebContentsView;
   readonly #overlayRendererUrl: string;
   #layout: DockLayoutState;
@@ -108,7 +157,16 @@ export class DockWorkspaceHost {
   } | null = null;
   #dragPreview: DragPreviewMessage | null = null;
   #pendingDockCandidate: PendingDockCandidate | null = null;
-  #persistChain = Promise.resolve();
+  readonly #persistenceQueue = new PersistenceWriteQueue((error) => {
+    process.stderr.write(
+      `Dock layout persistence failed: ${String(error)}\n`,
+    );
+  });
+  #workspaceFrame: Rectangle | null;
+  #visible: boolean;
+  #interactionEnabled: boolean;
+  #shellAttached = false;
+  #shellLoaded = false;
   #overlayLoaded = false;
   #overlayAttached = false;
   #listenersAttached = false;
@@ -117,6 +175,16 @@ export class DockWorkspaceHost {
 
   readonly #handleMainWindowResize = (): void => {
     if (this.#disposed) return;
+    if (this.#followWindowContentBounds) {
+      const content = this.#mainWindow.getContentBounds();
+      this.#workspaceFrame = {
+        x: 0,
+        y: 0,
+        width: Math.max(1, content.width),
+        height: Math.max(1, content.height),
+      };
+      this.#layoutShell();
+    }
     const activeDrag = this.#dragPreview;
     this.#dragHitGeometry = null;
     this.#pendingDockCandidate = null;
@@ -157,6 +225,49 @@ export class DockWorkspaceHost {
           : new AtomicLayoutTextStorage(options.layoutFilePath)
       );
     this.#panelMinimumSizes = createPanelMinimumSizes(options.panels);
+    for (const panel of options.panels) {
+      this.#panelVisibility.set(panel.id, true);
+    }
+
+    const shellOptions = options.shellView;
+    this.#workspaceFrame = shellOptions === undefined
+      ? null
+      : sanitizeWorkspaceFrame(shellOptions.bounds);
+    this.#shellHeaderHeight = shellOptions?.headerHeight ?? SHELL_HEIGHT;
+    this.#followWindowContentBounds =
+      shellOptions?.followWindowContentBounds ?? false;
+    this.#onPanelWebContentsCreated =
+      options.onPanelWebContentsCreated;
+    this.#onPanelWebContentsDisposed =
+      options.onPanelWebContentsDisposed;
+    this.#visible = shellOptions?.visible ?? true;
+    this.#interactionEnabled = shellOptions?.interactionEnabled ?? true;
+
+    if (shellOptions === undefined) {
+      this.#shellView = null;
+      this.#shellRendererUrl = null;
+    } else {
+      const shellUrl = new URL(pathToFileURL(options.rendererHtmlPath));
+      shellUrl.searchParams.set("mode", "shell");
+      shellUrl.searchParams.set(
+        "shellHeaderHeight",
+        String(this.#shellHeaderHeight),
+      );
+      this.#shellRendererUrl = shellUrl.href;
+      this.#shellView = new WebContentsView({
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          preload: options.preloadPath,
+        },
+      });
+      this.#shellView.setBackgroundColor("#101313");
+      this.#shellView.setVisible(this.#visible);
+      this.#shellView.webContents.setWindowOpenHandler(() => ({
+        action: "deny",
+      }));
+    }
 
     const overlayUrl = new URL(pathToFileURL(options.rendererHtmlPath));
     overlayUrl.searchParams.set("mode", "overlay");
@@ -193,6 +304,31 @@ export class DockWorkspaceHost {
     return [...this.#hosts.values()];
   }
 
+  get bounds(): Rectangle {
+    const frame = this.#workspaceFrame;
+    if (frame !== null) return { ...frame };
+    const content = this.#mainWindow.getContentBounds();
+    return {
+      x: 0,
+      y: 0,
+      width: Math.max(1, content.width),
+      height: Math.max(1, content.height),
+    };
+  }
+
+  get visible(): boolean {
+    return this.#visible;
+  }
+
+  get interactionEnabled(): boolean {
+    return this.#interactionEnabled;
+  }
+
+  get shellWebContentsId(): number {
+    return this.#shellView?.webContents.id
+      ?? this.#mainWindow.webContents.id;
+  }
+
   async load(): Promise<void> {
     if (this.#disposed || this.#loaded) return;
 
@@ -206,6 +342,7 @@ export class DockWorkspaceHost {
     this.#recomputeGeometry();
 
     try {
+      this.#attachShell();
       for (const definition of this.#panels) {
         const content = this.#panelContents[definition.id];
         const hostOptions = {
@@ -220,15 +357,29 @@ export class DockWorkspaceHost {
             ? hostOptions
             : { ...hostOptions, content },
         );
+        this.#hosts.set(definition.id, host);
+        this.#onPanelWebContentsCreated?.(
+          definition.id,
+          host.webContents,
+        );
         host.setDockedPresentation(
           { x: 0, y: 0, width: 1, height: 1 },
           false,
         );
-        this.#hosts.set(definition.id, host);
+        host.setWorkspaceVisible(this.#visible);
       }
 
+      const shellLoad = this.#shellView === null
+        || this.#shellRendererUrl === null
+        ? Promise.resolve()
+        : this.#shellView.webContents
+          .loadURL(this.#shellRendererUrl)
+          .then(() => {
+            this.#shellLoaded = true;
+          });
       await Promise.all([
         ...this.hosts.map((host) => host.load()),
+        shellLoad,
         this.#overlayView.webContents.loadURL(this.#overlayRendererUrl),
       ]);
       this.#overlayLoaded = true;
@@ -251,7 +402,102 @@ export class DockWorkspaceHost {
       panels: this.#panels,
       layout: this.#layout,
       geometry: this.#previewGeometry ?? this.#geometry,
+      interactionEnabled: this.#interactionEnabled,
     };
+  }
+
+  panelStates(): readonly DockWorkspacePanelState[] {
+    const activeDockedPanels = collectActivePanelIds(
+      this.#layoutForPresentation(this.#layout).root,
+    );
+    return this.hosts.map((host) => {
+      const requestedVisible =
+        this.#panelVisibility.get(host.panelId) === true;
+      const status = deriveDockWorkspacePanelStatus({
+        host: host.host,
+        requestedVisible,
+        dockedActive: activeDockedPanels.has(host.panelId),
+        rendered: host.visible,
+      });
+      return {
+        panelId: host.panelId,
+        host: host.host,
+        ...status,
+        webContentsId: host.webContentsId,
+      };
+    });
+  }
+
+  onDidChange(listener: () => void): () => void {
+    this.#changeListeners.add(listener);
+    return () => {
+      this.#changeListeners.delete(listener);
+    };
+  }
+
+  setBounds(bounds: Rectangle): void {
+    if (this.#workspaceFrame === null || this.#disposed) return;
+    const next = sanitizeWorkspaceFrame(bounds);
+    if (sameRectangle(this.#workspaceFrame, next)) return;
+    this.#workspaceFrame = next;
+    this.#handleWorkspaceGeometryChange();
+  }
+
+  setVisible(visible: boolean): void {
+    if (this.#disposed || this.#visible === visible) return;
+    this.#visible = visible;
+    if (this.#shellView !== null && !this.#shellView.webContents.isDestroyed()) {
+      this.#shellView.setVisible(visible);
+    }
+    if (!visible) this.#detachOverlay();
+    for (const host of this.#hosts.values()) {
+      host.setWorkspaceVisible(visible);
+    }
+    this.#publishState();
+  }
+
+  setInteractionEnabled(enabled: boolean): void {
+    if (this.#disposed || this.#interactionEnabled === enabled) return;
+    this.#interactionEnabled = enabled;
+    if (!enabled) this.clearDragPreview();
+    this.#publishState();
+  }
+
+  setPanelVisible(panelId: PanelId, visible: boolean): void {
+    const host = this.#hosts.get(panelId);
+    if (host === undefined) {
+      throw new Error(`Unknown Electron Dock panel id: ${panelId}`);
+    }
+    if (this.#panelVisibility.get(panelId) === visible) return;
+    this.#panelVisibility.set(panelId, visible);
+    host.setPanelVisible(visible);
+    this.#handleWorkspaceGeometryChange();
+  }
+
+  activatePanelById(panelId: PanelId): void {
+    const host = this.#hosts.get(panelId);
+    if (host === undefined) {
+      throw new Error(`Unknown Electron Dock panel id: ${panelId}`);
+    }
+    if (this.#panelVisibility.get(panelId) !== true) {
+      this.setPanelVisible(panelId, true);
+    }
+    if (host.host === "floating") {
+      host.focusFloating();
+      this.#publishState();
+      return;
+    }
+    const tabsNodeId = tabsNodeIdForPanel(this.#layout.root, panelId);
+    if (tabsNodeId !== null) this.activatePanel(tabsNodeId, panelId);
+  }
+
+  reset(): void {
+    for (const [panelId, host] of this.#hosts) {
+      this.#panelVisibility.set(panelId, true);
+      host.setPanelVisible(true);
+      if (host.host === "floating") host.redock();
+    }
+    this.#commitLayout(this.#initialLayout);
   }
 
   hostByPanelId(panelId: PanelId): DockPanelHost | null {
@@ -282,6 +528,9 @@ export class DockWorkspaceHost {
   floatPanel(panelId: PanelId, bounds?: Rectangle): DockPanelHost | null {
     const host = this.#hosts.get(panelId);
     if (host === undefined) return null;
+    if (this.#panelVisibility.get(panelId) !== true) {
+      this.setPanelVisible(panelId, true);
+    }
     const snapshot = host.float(
       bounds,
       bounds === undefined ? { boundsKind: "content" } : {},
@@ -331,6 +580,9 @@ export class DockWorkspaceHost {
       || !this.#allowedDropPositions(panelId).has(target.position)
     ) {
       return;
+    }
+    if (this.#panelVisibility.get(panelId) !== true) {
+      this.setPanelVisible(panelId, true);
     }
     const next = reduceDockPanel(this.#layout, panelId, target, options);
     host.redock();
@@ -387,9 +639,10 @@ export class DockWorkspaceHost {
   ): DockDropResolution | null {
     if (this.#mainWindow.isDestroyed()) return null;
     const content = this.#mainWindow.getContentBounds();
+    const frame = this.#workspaceFrame;
     const localPoint = {
-      x: screenPoint.x - content.x,
-      y: screenPoint.y - content.y,
+      x: screenPoint.x - content.x - (frame?.x ?? 0),
+      y: screenPoint.y - content.y - (frame?.y ?? 0),
     };
     const hitGeometry = panelId === undefined
       ? this.#geometry
@@ -584,7 +837,7 @@ export class DockWorkspaceHost {
   }
 
   async flushPersistence(): Promise<void> {
-    await this.#persistChain;
+    await this.#persistenceQueue.flush();
   }
 
   dispose(): void {
@@ -596,12 +849,32 @@ export class DockWorkspaceHost {
     this.#pendingDockCandidate = null;
     this.#detachWindowListeners();
     this.#detachOverlay();
-    for (const host of this.#hosts.values()) host.dispose();
+    for (const host of this.#hosts.values()) {
+      const panelId = host.panelId;
+      const webContentsId = host.webContentsId;
+      host.dispose();
+      try {
+        this.#onPanelWebContentsDisposed?.(panelId, webContentsId);
+      } catch (error) {
+        process.stderr.write(
+          `Electron Dock panel disposal callback failed: ${String(error)}\n`,
+        );
+      }
+    }
     this.#hosts.clear();
     if (!this.#overlayView.webContents.isDestroyed()) {
       this.#overlayView.webContents.close();
     }
+    this.#detachShell();
+    if (
+      this.#shellView !== null
+      && !this.#shellView.webContents.isDestroyed()
+    ) {
+      this.#shellView.webContents.close();
+    }
+    this.#changeListeners.clear();
     this.#overlayLoaded = false;
+    this.#shellLoaded = false;
   }
 
   #commitLayout(layout: DockLayoutState): void {
@@ -626,14 +899,9 @@ export class DockWorkspaceHost {
     this.#publishState();
     if (this.#storage !== undefined) {
       const storage = this.#storage;
-      this.#persistChain = this.#persistChain
-        .catch(() => undefined)
-        .then(() => persistDockLayout(storage, layout))
-        .catch((error: unknown) => {
-          process.stderr.write(
-            `Dock layout persistence failed: ${String(error)}\n`,
-          );
-        });
+      this.#persistenceQueue.enqueue(
+        () => persistDockLayout(storage, layout),
+      );
     }
   }
 
@@ -652,7 +920,7 @@ export class DockWorkspaceHost {
     >,
   ): DockLayoutGeometry {
     return solveDockLayoutGeometry(
-      layout,
+      this.#layoutForPresentation(layout),
       this.#workspaceBounds(),
       {
         splitterThickness: SPLITTER_THICKNESS,
@@ -669,6 +937,17 @@ export class DockWorkspaceHost {
   }
 
   #workspaceBounds(): Rectangle {
+    if (this.#workspaceFrame !== null) {
+      return {
+        x: 0,
+        y: Math.min(this.#shellHeaderHeight, this.#workspaceFrame.height),
+        width: Math.max(0, this.#workspaceFrame.width),
+        height: Math.max(
+          0,
+          this.#workspaceFrame.height - this.#shellHeaderHeight,
+        ),
+      };
+    }
     const content = this.#mainWindow.getContentBounds();
     return {
       x: 0,
@@ -697,16 +976,41 @@ export class DockWorkspaceHost {
 
   #publishState(): void {
     const message = this.snapshot();
-    if (!this.#mainWindow.isDestroyed()) {
+    if (
+      this.#shellView !== null
+      && this.#shellLoaded
+      && !this.#shellView.webContents.isDestroyed()
+    ) {
+      this.#shellView.webContents.send(IPC.workspaceState, message);
+    } else if (this.#shellView === null && !this.#mainWindow.isDestroyed()) {
       this.#mainWindow.webContents.send(IPC.workspaceState, message);
     }
     if (this.#overlayCanReceive()) {
       this.#overlayView.webContents.send(IPC.workspaceState, message);
     }
+    for (const listener of this.#changeListeners) {
+      try {
+        listener();
+      } catch (error) {
+        process.stderr.write(
+          `Electron Dock change listener failed: ${String(error)}\n`,
+        );
+      }
+    }
+    for (const state of this.panelStates()) {
+      const message: PanelStateMessage = state;
+      this.#hosts.get(state.panelId)?.notifyPanelState(message);
+    }
   }
 
   #publishDragPreview(message: DragPreviewMessage): void {
-    if (!this.#mainWindow.isDestroyed()) {
+    if (
+      this.#shellView !== null
+      && this.#shellLoaded
+      && !this.#shellView.webContents.isDestroyed()
+    ) {
+      this.#shellView.webContents.send(IPC.dragPreview, message);
+    } else if (this.#shellView === null && !this.#mainWindow.isDestroyed()) {
       this.#mainWindow.webContents.send(IPC.dragPreview, message);
     }
     if (this.#overlayCanReceive()) {
@@ -727,7 +1031,10 @@ export class DockWorkspaceHost {
         ?? { x: 0, y: 0, width: 1, height: 1 };
       // The transparent overlay is layered above active business views during
       // dragging. Business views remain attached and are never blanked.
-      host.setDockedPresentation(bounds, viewports.has(host.panelId));
+      host.setDockedPresentation(
+        this.#toOwnerBounds(bounds),
+        viewports.has(host.panelId) && this.#visible,
+      );
     }
     if (
       this.#dragPreview !== null
@@ -739,7 +1046,8 @@ export class DockWorkspaceHost {
 
   #attachOverlayOnTop(): void {
     if (
-      !this.#overlayLoaded
+      !this.#visible
+      || !this.#overlayLoaded
       || this.#mainWindow.isDestroyed()
       || this.#overlayView.webContents.isDestroyed()
     ) {
@@ -773,13 +1081,7 @@ export class DockWorkspaceHost {
     ) {
       return;
     }
-    const content = this.#mainWindow.getContentBounds();
-    this.#overlayView.setBounds({
-      x: 0,
-      y: 0,
-      width: Math.max(1, content.width),
-      height: Math.max(1, content.height),
-    });
+    this.#overlayView.setBounds(this.bounds);
   }
 
   #overlayCanReceive(): boolean {
@@ -801,6 +1103,77 @@ export class DockWorkspaceHost {
     this.#listenersAttached = false;
   }
 
+  #attachShell(): void {
+    if (
+      this.#shellView === null
+      || this.#shellAttached
+      || this.#mainWindow.isDestroyed()
+      || this.#shellView.webContents.isDestroyed()
+    ) {
+      return;
+    }
+    this.#mainWindow.contentView.addChildView(this.#shellView);
+    this.#shellAttached = true;
+    this.#layoutShell();
+  }
+
+  #detachShell(): void {
+    if (
+      this.#shellView === null
+      || !this.#shellAttached
+      || this.#mainWindow.isDestroyed()
+    ) {
+      return;
+    }
+    this.#mainWindow.contentView.removeChildView(this.#shellView);
+    this.#shellAttached = false;
+  }
+
+  #layoutShell(): void {
+    if (
+      this.#shellView === null
+      || !this.#shellAttached
+      || this.#mainWindow.isDestroyed()
+      || this.#shellView.webContents.isDestroyed()
+    ) {
+      return;
+    }
+    this.#shellView.setBounds(this.bounds);
+    this.#shellView.setVisible(this.#visible);
+  }
+
+  #handleWorkspaceGeometryChange(): void {
+    if (this.#disposed) return;
+    this.#dragHitGeometry = null;
+    this.#pendingDockCandidate = null;
+    this.#previewGeometry = null;
+    this.#recomputeGeometry();
+    this.#layoutShell();
+    this.#applyDockedPresentations();
+    this.#layoutOverlay();
+    this.#publishState();
+  }
+
+  #layoutForPresentation(layout: DockLayoutState): DockLayoutState {
+    let visibleLayout = layout;
+    for (const [panelId, visible] of this.#panelVisibility) {
+      if (!visible) visibleLayout = removePanel(visibleLayout, panelId);
+    }
+    return visibleLayout;
+  }
+
+  #toOwnerBounds(bounds: Rectangle): Rectangle {
+    const frame = this.#workspaceFrame;
+    return frame === null
+      ? bounds
+      : {
+        x: frame.x + bounds.x,
+        y: frame.y + bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+      };
+  }
+
   #defaultDockTarget(): DockDropTarget | null {
     const firstTabsNodeId = firstTabsId(this.#layout.root);
     return firstTabsNodeId === null
@@ -817,6 +1190,24 @@ export class DockWorkspaceHost {
       ?? ["left", "right", "top", "bottom", "center"],
     );
   }
+}
+
+export function deriveDockWorkspacePanelStatus(options: {
+  readonly host: "docked" | "floating";
+  readonly requestedVisible: boolean;
+  readonly dockedActive: boolean;
+  readonly rendered: boolean;
+}): Pick<
+  DockWorkspacePanelState,
+  "active" | "requestedVisible" | "visible"
+> {
+  return {
+    active: options.host === "floating"
+      ? options.requestedVisible
+      : options.dockedActive,
+    requestedVisible: options.requestedVisible,
+    visible: options.rendered,
+  };
 }
 
 function createPanelMinimumSizes(
@@ -847,6 +1238,49 @@ function firstTabsId(root: DockLayoutState["root"]): string | null {
   if (root === null) return null;
   if (root.type === "tabs") return root.id;
   return firstTabsId(root.first) ?? firstTabsId(root.second);
+}
+
+function tabsNodeIdForPanel(
+  root: DockLayoutState["root"],
+  panelId: PanelId,
+): string | null {
+  if (root === null) return null;
+  if (root.type === "tabs") {
+    return root.panelIds.includes(panelId) ? root.id : null;
+  }
+  return tabsNodeIdForPanel(root.first, panelId)
+    ?? tabsNodeIdForPanel(root.second, panelId);
+}
+
+function collectActivePanelIds(
+  root: DockLayoutState["root"],
+  result = new Set<PanelId>(),
+): ReadonlySet<PanelId> {
+  if (root === null) return result;
+  if (root.type === "tabs") {
+    result.add(root.activePanelId);
+    return result;
+  }
+  collectActivePanelIds(root.first, result);
+  collectActivePanelIds(root.second, result);
+  return result;
+}
+
+function sanitizeWorkspaceFrame(bounds: Rectangle): Rectangle {
+  if (
+    !Number.isFinite(bounds.x)
+    || !Number.isFinite(bounds.y)
+    || !Number.isFinite(bounds.width)
+    || !Number.isFinite(bounds.height)
+  ) {
+    throw new Error("Electron Dock workspace bounds must be finite.");
+  }
+  return {
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+    width: Math.max(1, Math.round(bounds.width)),
+    height: Math.max(1, Math.round(bounds.height)),
+  };
 }
 
 /**

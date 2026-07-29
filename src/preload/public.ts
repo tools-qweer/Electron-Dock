@@ -3,6 +3,11 @@ import type { Rectangle } from "../core/types.js";
 import {
   IPC,
   type HostChangedMessage,
+  type PanelStateMessage,
+} from "../shared/protocol.js";
+export type {
+  HostChangedMessage,
+  PanelStateMessage,
 } from "../shared/protocol.js";
 
 /**
@@ -14,6 +19,10 @@ import {
 export interface ElectronDockPreloadApi {
   getHostState(): Promise<HostChangedMessage | null>;
   onHostChanged(listener: (message: HostChangedMessage) => void): () => void;
+  getPanelState(): Promise<PanelStateMessage | null>;
+  onPanelStateChanged(
+    listener: (message: PanelStateMessage) => void,
+  ): () => void;
   floatPanel(bounds?: Rectangle): Promise<unknown>;
   redockPanel(): Promise<unknown>;
   readPanelSnapshot(): Promise<unknown>;
@@ -35,6 +44,14 @@ export function createElectronDockPreloadApi(): ElectronDockPreloadApi {
       listener: (message: HostChangedMessage) => void,
     ): () => void {
       return subscribe(IPC.hostChanged, listener);
+    },
+    getPanelState(): Promise<PanelStateMessage | null> {
+      return ipcRenderer.invoke(IPC.getPanelState);
+    },
+    onPanelStateChanged(
+      listener: (message: PanelStateMessage) => void,
+    ): () => void {
+      return subscribe(IPC.panelStateChanged, listener);
     },
     floatPanel(bounds?: Rectangle): Promise<unknown> {
       return ipcRenderer.invoke(IPC.floatPanel, bounds);

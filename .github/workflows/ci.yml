@@ -41,5 +41,8 @@ jobs:
       - name: Install and typecheck the packed consumer fixture
         run: npm run package:consumer
 
+      - name: Run packed existing-window attach smoke
+        run: npm run package:consumer:electron
+
       - name: Inspect publish payload
         run: npm pack --dry-run --json --ignore-scripts

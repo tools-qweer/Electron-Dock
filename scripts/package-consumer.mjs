@@ -131,6 +131,14 @@ async function verifyInstalledPayload(consumerRoot) {
   if (nativeHeader[0] !== 0x4d || nativeHeader[1] !== 0x5a) {
     throw new Error("Installed native helper does not have an MZ header");
   }
+  const peOffset = nativeHeader.readUInt32LE(0x3c);
+  const peMachine = nativeHeader.readUInt16LE(peOffset + 4);
+  if (peMachine !== 0x8664) {
+    throw new Error(
+      "Installed native helper must target PE AMD64 (0x8664); received "
+      + `0x${peMachine.toString(16).padStart(4, "0")}`,
+    );
+  }
 }
 
 async function runElectronConsumer(consumerRoot, temporaryDirectory) {
