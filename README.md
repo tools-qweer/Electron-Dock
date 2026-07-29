@@ -4,7 +4,7 @@ Windows x64 原生 Electron 停靠组件。它让同一个持久
 `WebContentsView` 面板在主窗口停靠区和真实 `BaseWindow` 浮窗之间迁移，
 不通过销毁、重建或重载面板来模拟浮动。
 
-当前版本是 `0.2.0-alpha.1`。它用于尽早验证集成边界，不代表公共 API 已
+当前版本是 `0.2.0-alpha.2`。它用于尽早验证集成边界，不代表公共 API 已
 稳定，也不代表 Qt Dock 的完整交互已经通过人工验收。
 
 ## 支持范围
@@ -20,10 +20,10 @@ macOS、Linux X11、Wayland、Windows arm64 和 ia32 不在此 alpha 的支持
 
 ## 安装
 
-从首个 GitHub Alpha 标签安装：
+从当前 GitHub Alpha 标签安装：
 
 ```powershell
-npm install 'github:tools-qweer/Electron-Dock#v0.2.0-alpha.1' electron@^43.1.1
+npm install 'github:tools-qweer/Electron-Dock#v0.2.0-alpha.2' electron@^43.1.1
 ```
 
 发布到 npm 后也可使用：
@@ -297,6 +297,8 @@ npm run native:refresh-fallback
 - 简单往返后没有残留 `BaseWindow`，主进程关闭会回收拖动 helper。
 - 真实 tgz 消费者可挂入现有 `BrowserWindow`；挂入和独立回收均不改变宿主
   WebContents、页面状态、菜单、关闭监听或窗口生命期。
+- 面板首屏脚本可在 `attachWorkspace()` 完成前读取非空的公开面板状态；
+  初始化期不会提前开放 float/redock 等写权限，失败或销毁后临时授权会撤销。
 
 自动检查验证状态、几何、IPC、持久化和资源不变量，但不等于人工体验验收。
 

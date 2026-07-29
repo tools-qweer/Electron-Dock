@@ -133,7 +133,9 @@ async function run() {
             "data:text/html;charset=utf-8,"
             + encodeURIComponent(
               "<!doctype html><title>Attached consumer</title>"
-              + "<main id=\"attached-ok\">attached panel loaded</main>",
+              + "<main id=\"attached-ok\">attached panel loaded</main>"
+              + "<script>globalThis.__firstPanelState="
+              + "window.electronDock.getPanelState()</script>",
             ),
         },
       },
@@ -183,6 +185,25 @@ async function run() {
         generation: createdPanelEvent?.generation,
         initialUrl: createdPanelInitialUrl,
       }),
+    );
+  }
+  const firstScreenPanelState =
+    await createdPanelEvent.webContents.executeJavaScript(
+      "globalThis.__firstPanelState",
+      true,
+    );
+  if (
+    firstScreenPanelState?.panelId !== "consumer-panel"
+    || firstScreenPanelState.host !== "docked"
+    || firstScreenPanelState.active !== true
+    || firstScreenPanelState.requestedVisible !== true
+    || typeof firstScreenPanelState.visible !== "boolean"
+    || firstScreenPanelState.webContentsId
+      !== createdPanelEvent.webContents.id
+  ) {
+    throw new Error(
+      "Panel first-screen state query failed: "
+      + JSON.stringify(firstScreenPanelState),
     );
   }
 
@@ -351,7 +372,7 @@ async function run() {
       "ELECTRON_CONSUMER_OK "
       + `electron=${process.versions.electron} `
       + "root=imported core=executed preload=required "
-      + "attach=owner-preserved/sender-hook/panel-state/guards/reparent "
+      + "attach=owner-preserved/sender-hook/first-screen-state/guards/reparent "
       + "window=create/dispose nativeHelper=started\n",
       resolve,
     ),

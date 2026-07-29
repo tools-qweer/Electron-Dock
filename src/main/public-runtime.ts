@@ -188,6 +188,7 @@ export function createElectronDockRuntime(): ElectronDockRuntime {
 
 class ElectronDockRuntimeImpl implements ElectronDockRuntime {
   readonly #workspaces = new Map<string, ElectronDockWorkspaceImpl>();
+  readonly #initializingWorkspaces = new Map<string, DockWorkspaceHost>();
   readonly #windows = new Map<string, ElectronDockWindowImpl>();
   readonly #pendingIds = new Set<string>();
   readonly #pendingOperations = new Set<Promise<unknown>>();
@@ -277,9 +278,9 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
   };
 
   readonly #handleGetHostState = (event: IpcMainInvokeEvent): unknown => {
-    const located = this.#panelEntry(event);
+    const located = this.#panelStateEntry(event);
     if (located === null) return null;
-    const snapshot = located.entry.workspace
+    const snapshot = located.workspace
       .hostByPanelId(located.panelId)
       ?.snapshot();
     return snapshot === undefined
@@ -292,9 +293,9 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
   };
 
   readonly #handleGetPanelState = (event: IpcMainInvokeEvent): unknown => {
-    const located = this.#panelEntry(event);
+    const located = this.#panelStateEntry(event);
     if (located === null) return null;
-    return located.entry.workspace.panelStates().find(
+    return located.workspace.panelStates().find(
       (state) => state.panelId === located.panelId,
     ) ?? null;
   };
@@ -386,7 +387,11 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
         "Electron Dock workspaces must be created after app.whenReady().",
       );
     }
-    if (this.#workspaces.has(options.id) || this.#pendingIds.has(options.id)) {
+    if (
+      this.#workspaces.has(options.id)
+      || this.#initializingWorkspaces.has(options.id)
+      || this.#pendingIds.has(options.id)
+    ) {
       throw new Error(
         `Electron Dock workspace id is already in use: ${options.id}`,
       );
@@ -429,6 +434,7 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
 
     const content = window.getContentBounds();
     let workspace: ElectronDockWorkspaceImpl | null = null;
+    let initializingWorkspace: DockWorkspaceHost | null = null;
     try {
       workspace = await ElectronDockWorkspaceImpl.create({
         options: {
@@ -445,6 +451,13 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
         resources: resolveElectronDockResources(options),
         ownsWindow: true,
         followWindowContentBounds: true,
+        onWorkspaceHostCreated: (createdWorkspace) => {
+          initializingWorkspace = createdWorkspace;
+          this.#registerInitializingWorkspace(
+            options.id,
+            createdWorkspace,
+          );
+        },
         onDisposed: () => {
           this.#removeEntry(options.id, workspace);
         },
@@ -460,6 +473,11 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
         window.destroy();
       }
       throw error;
+    } finally {
+      this.#removeInitializingWorkspace(
+        options.id,
+        initializingWorkspace,
+      );
     }
   }
 
@@ -467,12 +485,20 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     options: ElectronDockWorkspaceOptions,
   ): Promise<ElectronDockWorkspaceImpl> {
     let workspace: ElectronDockWorkspaceImpl | null = null;
+    let initializingWorkspace: DockWorkspaceHost | null = null;
     try {
       workspace = await ElectronDockWorkspaceImpl.create({
         options,
         resources: resolveElectronDockResources(options),
         ownsWindow: false,
         followWindowContentBounds: false,
+        onWorkspaceHostCreated: (createdWorkspace) => {
+          initializingWorkspace = createdWorkspace;
+          this.#registerInitializingWorkspace(
+            options.id,
+            createdWorkspace,
+          );
+        },
         onDisposed: () => {
           this.#removeEntry(options.id, workspace);
         },
@@ -482,6 +508,41 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     } catch (error) {
       if (workspace !== null) await workspace.dispose().catch(() => {});
       throw error;
+    } finally {
+      this.#removeInitializingWorkspace(
+        options.id,
+        initializingWorkspace,
+      );
+    }
+  }
+
+  #registerInitializingWorkspace(
+    id: string,
+    workspace: DockWorkspaceHost,
+  ): void {
+    if (this.#disposed) {
+      throw new Error(
+        "Electron Dock runtime was disposed while workspace creation was in progress.",
+      );
+    }
+    if (
+      this.#workspaces.has(id)
+      || this.#initializingWorkspaces.has(id)
+    ) {
+      throw new Error(`Electron Dock workspace id is already in use: ${id}`);
+    }
+    this.#initializingWorkspaces.set(id, workspace);
+  }
+
+  #removeInitializingWorkspace(
+    id: string,
+    expected: DockWorkspaceHost | null,
+  ): void {
+    if (
+      expected !== null
+      && this.#initializingWorkspaces.get(id) === expected
+    ) {
+      this.#initializingWorkspaces.delete(id);
     }
   }
 
@@ -516,6 +577,7 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     const workspaces = [...this.#workspaces.values()];
     const pending = [...this.#pendingOperations];
     this.#workspaces.clear();
+    this.#initializingWorkspaces.clear();
     this.#windows.clear();
     const errors: unknown[] = [];
     try {
@@ -559,8 +621,28 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
   } | null {
     if (!senderIsMainFrame(event)) return null;
     for (const entry of this.#workspaces.values()) {
-      const host = entry.workspace.hostByWebContents(event.sender.id);
+      const host = entry.workspace.hostByWebContents(event.sender);
       if (host !== null) return { entry, panelId: host.panelId };
+    }
+    return null;
+  }
+
+  #panelStateEntry(
+    event: IpcMainEvent | IpcMainInvokeEvent,
+  ): {
+    readonly workspace: DockWorkspaceHost;
+    readonly panelId: string;
+  } | null {
+    if (!senderIsMainFrame(event)) return null;
+    for (const entry of this.#workspaces.values()) {
+      const host = entry.workspace.hostByWebContents(event.sender);
+      if (host !== null) {
+        return { workspace: entry.workspace, panelId: host.panelId };
+      }
+    }
+    for (const workspace of this.#initializingWorkspaces.values()) {
+      const host = workspace.hostByWebContents(event.sender);
+      if (host !== null) return { workspace, panelId: host.panelId };
     }
     return null;
   }
@@ -571,6 +653,7 @@ interface CreateWorkspaceImplOptions {
   readonly resources: ElectronDockResources;
   readonly ownsWindow: boolean;
   readonly followWindowContentBounds: boolean;
+  readonly onWorkspaceHostCreated: (workspace: DockWorkspaceHost) => void;
   readonly onDisposed: () => void;
 }
 
@@ -681,6 +764,7 @@ class ElectronDockWorkspaceImpl implements ElectronDockWorkspace {
     );
     let dragController: NativeDragController | null = null;
     try {
+      createOptions.onWorkspaceHostCreated(workspace);
       await workspace.load();
       dragController = new NativeDragController(
         options.window,

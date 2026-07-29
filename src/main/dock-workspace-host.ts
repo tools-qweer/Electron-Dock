@@ -504,9 +504,15 @@ export class DockWorkspaceHost {
     return this.#hosts.get(panelId) ?? null;
   }
 
-  hostByWebContents(webContentsId: number): DockPanelHost | null {
+  hostByWebContents(
+    webContents: number | WebContents,
+  ): DockPanelHost | null {
     for (const host of this.#hosts.values()) {
-      if (host.webContentsId === webContentsId) {
+      if (
+        typeof webContents === "number"
+          ? host.webContentsId === webContents
+          : host.webContents === webContents
+      ) {
         return host;
       }
     }

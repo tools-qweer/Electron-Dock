@@ -16,6 +16,10 @@ interface BrowserWindowDouble {
 
 interface WorkspaceDouble {
   disposed: boolean;
+  readonly panelWebContents: {
+    readonly id: number;
+    readonly mainFrame: object;
+  };
   bounds: Rectangle;
   visible: boolean;
   interactionEnabled: boolean;
@@ -35,6 +39,9 @@ const testState = vi.hoisted(() => ({
   workspaces: [] as WorkspaceDouble[],
   dragControllers: [] as DragControllerDouble[],
   flushError: null as unknown,
+  workspaceLoadHook: null as (
+    ((workspace: WorkspaceDouble) => void | Promise<void>) | null
+  ),
   ipcHandlers: new Map<string, unknown>(),
   ipcListeners: new Map<string, Set<unknown>>(),
 }));
@@ -174,6 +181,10 @@ vi.mock("electron", () => {
 vi.mock("./dock-workspace-host.js", () => {
   class DockWorkspaceHost {
     readonly shellWebContentsId = testState.nextWebContentsId++;
+    readonly panelWebContents = {
+      id: 500,
+      mainFrame: {},
+    };
     readonly layout = {
       version: 1,
       nextNodeSequence: 1,
@@ -203,7 +214,9 @@ vi.mock("./dock-workspace-host.js", () => {
       testState.workspaces.push(this);
     }
 
-    async load(): Promise<void> {}
+    async load(): Promise<void> {
+      await testState.workspaceLoadHook?.(this);
+    }
 
     snapshot() {
       return {
@@ -288,8 +301,12 @@ vi.mock("./dock-workspace-host.js", () => {
         : null;
     }
 
-    hostByWebContents(webContentsId: number) {
-      return webContentsId === 500
+    hostByWebContents(webContents: number | object) {
+      return (
+        typeof webContents === "number"
+          ? webContents === this.panelWebContents.id
+          : webContents === this.panelWebContents
+      )
         ? this.hostByPanelId("panel")
         : null;
     }
@@ -358,6 +375,7 @@ beforeEach(() => {
   testState.workspaces.length = 0;
   testState.dragControllers.length = 0;
   testState.flushError = null;
+  testState.workspaceLoadHook = null;
   testState.ipcHandlers.clear();
   testState.ipcListeners.clear();
   runtime = createElectronDockRuntime();
@@ -371,6 +389,142 @@ afterEach(async () => {
 });
 
 describe("ElectronDockRuntime attachWorkspace", () => {
+  it("serves panel state during the panel's first load before publication", async () => {
+    let firstScreenState: unknown;
+    testState.workspaceLoadHook = (loadingWorkspace) => {
+      const senderFrame = loadingWorkspace.panelWebContents.mainFrame;
+      const event = {
+        sender: loadingWorkspace.panelWebContents,
+        senderFrame,
+      };
+      const invokeGetPanelState = testState.ipcHandlers.get(
+        IPC.getPanelState,
+      ) as (event: unknown) => unknown;
+      const invokeFloat = testState.ipcHandlers.get(IPC.floatPanel) as (
+        event: unknown,
+        value?: unknown,
+      ) => unknown;
+
+      expect(runtime!.workspaceById("starting")).toBeNull();
+      firstScreenState = invokeGetPanelState(event);
+      const forgedFrame = {};
+      expect(invokeGetPanelState({
+        sender: { id: 500, mainFrame: forgedFrame },
+        senderFrame: forgedFrame,
+      })).toBeNull();
+      expect(invokeGetPanelState({
+        sender: loadingWorkspace.panelWebContents,
+        senderFrame: {},
+      })).toBeNull();
+      expect(invokeFloat(event)).toBeNull();
+      expect(loadingWorkspace.floatCalls).toBe(0);
+    };
+
+    const owner = new BrowserWindow() as unknown as BrowserWindowDouble;
+    const workspace = await runtime!.attachWorkspace({
+      ...baseOptions("starting"),
+      window: owner as unknown as BrowserWindow,
+      bounds: { x: 0, y: 0, width: 500, height: 400 },
+    });
+
+    expect(firstScreenState).toEqual({
+      panelId: "panel",
+      host: "docked",
+      active: true,
+      requestedVisible: true,
+      visible: true,
+      webContentsId: 500,
+    });
+    expect(runtime!.workspaceById("starting")).toBe(workspace);
+  });
+
+  it("revokes startup panel authority after load failure and exact-id reuse", async () => {
+    const failure = new Error("panel load failed");
+    let failedEvent: unknown;
+    testState.workspaceLoadHook = (loadingWorkspace) => {
+      const senderFrame = loadingWorkspace.panelWebContents.mainFrame;
+      failedEvent = {
+        sender: loadingWorkspace.panelWebContents,
+        senderFrame,
+      };
+      const invokeGetPanelState = testState.ipcHandlers.get(
+        IPC.getPanelState,
+      ) as (event: unknown) => unknown;
+      expect(invokeGetPanelState(failedEvent)).not.toBeNull();
+      throw failure;
+    };
+
+    const owner = new BrowserWindow() as unknown as BrowserWindowDouble;
+    await expect(runtime!.attachWorkspace({
+      ...baseOptions("retry"),
+      window: owner as unknown as BrowserWindow,
+      bounds: { x: 0, y: 0, width: 500, height: 400 },
+    })).rejects.toBe(failure);
+
+    const invokeGetPanelState = testState.ipcHandlers.get(
+      IPC.getPanelState,
+    ) as (event: unknown) => unknown;
+    expect(invokeGetPanelState(failedEvent)).toBeNull();
+    expect(testState.workspaces[0]?.disposed).toBe(true);
+
+    testState.workspaceLoadHook = null;
+    const replacement = await runtime!.attachWorkspace({
+      ...baseOptions("retry"),
+      window: owner as unknown as BrowserWindow,
+      bounds: { x: 0, y: 0, width: 500, height: 400 },
+    });
+    const replacementState = testState.workspaces[1]!;
+    const replacementEvent = {
+      sender: replacementState.panelWebContents,
+      senderFrame: replacementState.panelWebContents.mainFrame,
+    };
+
+    expect(invokeGetPanelState(failedEvent)).toBeNull();
+    expect(invokeGetPanelState(replacementEvent)).not.toBeNull();
+    await replacement.dispose();
+  });
+
+  it("revokes startup panel authority before waiting for runtime disposal", async () => {
+    let releaseLoad!: () => void;
+    const loadBarrier = new Promise<void>((resolve) => {
+      releaseLoad = resolve;
+    });
+    let started!: () => void;
+    const loadStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let startupEvent: unknown;
+    testState.workspaceLoadHook = async (loadingWorkspace) => {
+      startupEvent = {
+        sender: loadingWorkspace.panelWebContents,
+        senderFrame: loadingWorkspace.panelWebContents.mainFrame,
+      };
+      started();
+      await loadBarrier;
+    };
+
+    const owner = new BrowserWindow() as unknown as BrowserWindowDouble;
+    const attach = runtime!.attachWorkspace({
+      ...baseOptions("disposing"),
+      window: owner as unknown as BrowserWindow,
+      bounds: { x: 0, y: 0, width: 500, height: 400 },
+    });
+    await loadStarted;
+    const invokeGetPanelState = testState.ipcHandlers.get(
+      IPC.getPanelState,
+    ) as (event: unknown) => unknown;
+    expect(invokeGetPanelState(startupEvent)).not.toBeNull();
+
+    const disposal = runtime!.dispose();
+    expect(invokeGetPanelState(startupEvent)).toBeNull();
+    releaseLoad();
+
+    await expect(attach).rejects.toThrow(
+      "runtime was disposed while workspace creation was in progress",
+    );
+    await disposal;
+  });
+
   it("does not reload, close, destroy, or change the owner menu", async () => {
     const owner = new BrowserWindow() as unknown as BrowserWindowDouble;
     const workspace = await runtime!.attachWorkspace({
@@ -449,9 +603,9 @@ describe("ElectronDockRuntime attachWorkspace", () => {
       bounds: { x: 0, y: 0, width: 500, height: 400 },
     });
     const state = testState.workspaces[0]!;
-    const senderFrame = {};
+    const senderFrame = state.panelWebContents.mainFrame;
     const event = {
-      sender: { id: 500, mainFrame: senderFrame },
+      sender: state.panelWebContents,
       senderFrame,
     };
     const invokeFloat = testState.ipcHandlers.get(IPC.floatPanel) as (

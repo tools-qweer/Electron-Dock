@@ -78,6 +78,10 @@
   `BrowserWindow`，并验证宿主 WebContents ID、URL、页面运行时状态、菜单、
   close 监听和窗口生命期均未被接管。bounds、显隐、交互开关、面板状态、
   浮出/停靠、sender 预登记和独立 dispose 已贯通。
+- `0.2.0-alpha.2` 的真实 tgz 消费者已验证：面板首屏脚本在
+  `attachWorkspace()` 尚未返回时调用 `getPanelState()` 仍得到完整非空状态。
+  初始化授权按精确 WebContents 与主 frame 校验，只开放状态读取；加载失败、
+  同数值 ID 的新 WebContents 和 runtime 并发销毁均有撤权回归测试。
 - 面板公开 preload 的 `getPanelState()` / `onPanelStateChanged()` 包含
   host、active、requestedVisible、实际 visible 和 WebContents ID；
   工作区隐藏或交互禁用时，
