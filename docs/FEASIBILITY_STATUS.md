@@ -1,6 +1,6 @@
 # 可行性状态
 
-更新日期：2026-07-29
+更新日期：2026-07-31
 
 ## 当前结论
 
@@ -85,6 +85,10 @@
 - `0.2.0-alpha.3` 为 Windows 原生拖动链增加异步跨线程窗口定位、坐标去重、
   30 秒 native 上限，以及 Main 侧的强制终止、旧 helper 事件隔离、懒重启和
   窗口生命周期兜底；自动测试覆盖正常取消、失焦、超时、写入失败与重启。
+- `0.2.0-alpha.4` 为同一标签组增加 4 DIP 起拖、实时顺序预览、取消回滚和
+  持久化换位；增加结构化 Shell 外观与动态更新、公开布局持久化 codec，
+  同时把任意 CSS 注入和 smoke-only Panel 快照移出公共合同。生产 Shell
+  Renderer 已改为压缩的 React production build。
 - 面板公开 preload 的 `getPanelState()` / `onPanelStateChanged()` 包含
   host、active、requestedVisible、实际 visible 和 WebContents ID；
   工作区隐藏或交互禁用时，
@@ -131,7 +135,7 @@
 运行：
 
 ```powershell
-cd 'E:\tools\Electron Dock'
+cd Electron-Dock
 npm start
 ```
 

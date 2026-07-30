@@ -1,8 +1,15 @@
 :root {
-  color-scheme: dark;
-  font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
-  background: #101313;
-  color: #eceff0;
+  color-scheme: var(--electron-dock-color-scheme, dark);
+  font-family: var(
+    --electron-dock-font-family,
+    "Segoe UI",
+    "Microsoft YaHei UI",
+    sans-serif
+  );
+  font-size: var(--electron-dock-font-size, 16px);
+  font-weight: var(--electron-dock-font-weight, 400);
+  background: var(--electron-dock-shell-background, #101313);
+  color: var(--electron-dock-foreground, #eceff0);
 }
 
 * {
@@ -47,7 +54,7 @@ button:hover {
   position: relative;
   width: 100%;
   height: 100%;
-  background: #101313;
+  background: var(--electron-dock-shell-background, #101313);
 }
 
 .dock-topbar {
@@ -56,22 +63,25 @@ button:hover {
   inset: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--electron-dock-topbar-gap, 14px);
   height: var(--dock-shell-header-height, 44px);
-  padding: 0 14px;
-  border-bottom: 1px solid #303636;
-  background: #151919;
+  padding: 0 var(--electron-dock-topbar-padding-inline, 14px);
+  border-bottom:
+    var(--electron-dock-topbar-border-width, 1px)
+    solid
+    var(--electron-dock-topbar-border-color, #303636);
+  background: var(--electron-dock-topbar-background, #151919);
   user-select: none;
 }
 
 .dock-topbar strong {
-  color: #f2f6f5;
-  font-size: 14px;
+  color: var(--electron-dock-topbar-foreground, #f2f6f5);
+  font-size: var(--electron-dock-topbar-title-font-size, 14px);
 }
 
 .dock-topbar span {
-  color: #81908e;
-  font-size: 12px;
+  color: var(--electron-dock-topbar-muted-foreground, #81908e);
+  font-size: var(--electron-dock-topbar-subtitle-font-size, 12px);
 }
 
 .dock-surface {
@@ -85,7 +95,7 @@ button:hover {
   inset: var(--dock-shell-header-height, 44px) 0 0;
   display: grid;
   place-items: center;
-  color: #788684;
+  color: var(--electron-dock-loading-foreground, #788684);
 }
 
 .dock-shell--interaction-disabled .dock-titlebar,
@@ -106,13 +116,19 @@ button:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--electron-dock-titlebar-gap, 12px);
   min-width: 0;
-  padding: 0 10px;
-  border: 1px solid #2b3332;
-  border-bottom-color: #242b2a;
-  background: #181d1c;
-  color: #dce5e3;
+  padding: 0 var(--electron-dock-titlebar-padding-inline, 10px);
+  border:
+    var(--electron-dock-titlebar-border-width, 1px)
+    solid
+    var(--electron-dock-titlebar-border-color, #2b3332);
+  border-bottom:
+    var(--electron-dock-titlebar-bottom-border-width, 1px)
+    solid
+    var(--electron-dock-titlebar-bottom-border-color, #242b2a);
+  background: var(--electron-dock-titlebar-background, #181d1c);
+  color: var(--electron-dock-titlebar-foreground, #dce5e3);
   cursor: grab;
   user-select: none;
 }
@@ -125,51 +141,77 @@ button:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--electron-dock-titlebar-font-size, 13px);
+  font-weight: var(--electron-dock-titlebar-font-weight, 600);
+  line-height: var(--electron-dock-titlebar-line-height, normal);
 }
 
 .dock-grip {
-  color: #5d6a68;
-  font-size: 14px;
+  color: var(--electron-dock-titlebar-grip-color, #5d6a68);
+  font-size: var(--electron-dock-titlebar-grip-font-size, 14px);
 }
 
 .dock-tabs {
   display: flex;
   align-items: stretch;
-  gap: 1px;
+  gap: var(--electron-dock-tabbar-gap, 1px);
   min-width: 0;
-  padding: 2px 4px 0;
-  border: 1px solid #2b3332;
-  background: #141817;
+  padding:
+    var(--electron-dock-tabbar-padding-top, 2px)
+    var(--electron-dock-tabbar-padding-inline, 4px)
+    0;
+  border:
+    var(--electron-dock-tabbar-border-width, 1px)
+    solid
+    var(--electron-dock-tabbar-border-color, #2b3332);
+  border-top:
+    var(--electron-dock-tabbar-top-border-width, 1px)
+    solid
+    var(--electron-dock-tabbar-top-border-color, #2b3332);
+  background: var(--electron-dock-tabbar-background, #141817);
+  touch-action: none;
+  user-select: none;
 }
 
 .dock-tab {
-  min-width: 76px;
+  min-width: var(--electron-dock-tab-minimum-width, 76px);
   height: 100%;
-  padding: 0 14px;
+  padding: 0 var(--electron-dock-tab-padding-inline, 14px);
   border: 0;
-  border-radius: 3px 3px 0 0;
-  background: transparent;
-  color: #82908e;
-  font-size: 12px;
+  border-radius:
+    var(--electron-dock-tab-border-radius, 3px)
+    var(--electron-dock-tab-border-radius, 3px)
+    0
+    0;
+  background: var(--electron-dock-tab-background, transparent);
+  color: var(--electron-dock-tab-foreground, #82908e);
+  cursor: grab;
+  font-size: var(--electron-dock-tab-font-size, 12px);
+  font-weight: var(--electron-dock-tab-font-weight, 400);
 }
 
 .dock-tab:hover {
   border: 0;
-  background: #1c2422;
-  color: #cbd5d3;
+  background: var(--electron-dock-tab-hover-background, #1c2422);
+  color: var(--electron-dock-tab-hover-foreground, #cbd5d3);
 }
 
 .dock-tab--active,
 .dock-tab--active:hover {
-  background: #234d45;
-  color: #00ffcc;
+  background: var(--electron-dock-tab-active-background, #234d45);
+  color: var(--electron-dock-tab-active-foreground, #00ffcc);
+}
+
+.dock-tab--reordering,
+.dock-tab--reordering:hover {
+  position: relative;
+  z-index: 1;
+  cursor: grabbing;
 }
 
 .dock-splitter {
   z-index: 6;
-  background: #0b0e0e;
+  background: var(--electron-dock-splitter-background, #0b0e0e);
   touch-action: none;
   user-select: none;
 }
@@ -199,7 +241,7 @@ button:hover {
 
 .dock-splitter:hover::after,
 .dock-splitter:active::after {
-  background: #303030;
+  background: var(--electron-dock-splitter-hover-background, #303030);
 }
 
 .panel-content {

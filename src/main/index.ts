@@ -3,6 +3,7 @@ import {
   BaseWindow,
   BrowserWindow,
   ipcMain,
+  webContents,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
 } from "electron";
@@ -12,6 +13,7 @@ import {
   createDockLayout,
   createSplitNode,
   createTabsNode,
+  findTabsNode,
 } from "../core/layout.js";
 import type {
   DockLayoutState,
@@ -22,6 +24,7 @@ import {
   IPC,
   isBeginPanelDragMessage,
   isRectangle,
+  isReorderTabMessage,
   isSetActivePanelMessage,
   isSetSplitRatioMessage,
 } from "../shared/protocol.js";
@@ -207,6 +210,21 @@ ipcMain.on(IPC.setActivePanel, (event, value: unknown) => {
   workspace.activatePanel(value.tabsNodeId, value.panelId);
 });
 
+ipcMain.on(IPC.reorderTab, (event, value: unknown) => {
+  if (
+    !senderIsShell(event)
+    || workspace === null
+    || !isReorderTabMessage(value)
+  ) {
+    return;
+  }
+  workspace.reorderTab(
+    value.tabsNodeId,
+    value.panelId,
+    value.targetIndex,
+  );
+});
+
 ipcMain.on(IPC.setSplitRatio, (event, value: unknown) => {
   if (
     !senderIsShell(event)
@@ -280,6 +298,7 @@ async function runSmoke(dockWorkspace: DockWorkspaceHost): Promise<void> {
     )
   );
   const activeMapSnapshot = await mapHost.readRendererSnapshot();
+  const tabReorderCorrect = await runTabReorderPointerSmoke(dockWorkspace);
   dockWorkspace.activatePanel("tabs-scenes", "story-scene");
   dockWorkspace.resizeSplit("split-root", 0.3);
   await dockWorkspace.flushPersistence();
@@ -343,6 +362,7 @@ async function runSmoke(dockWorkspace: DockWorkspaceHost): Promise<void> {
     panelCountCorrect: allHosts.length === PANEL_DEFINITIONS.length,
     panelWebContentsUnique: new Set(webContentsIds).size === webContentsIds.length,
     tabSwitchCorrect: tabSwitchedToMap,
+    tabReorderCorrect,
     inactiveWebContentsPreserved: (
       mapHost.webContentsId === mapWebContentsId
       && snapshotUsesWebContents(activeMapSnapshot, mapWebContentsId)
@@ -372,6 +392,115 @@ async function runSmoke(dockWorkspace: DockWorkspaceHost): Promise<void> {
     .every(([, value]) => value === true);
   disposeApplicationResources();
   app.exit(passed ? 0 : 1);
+}
+
+async function runTabReorderPointerSmoke(
+  dockWorkspace: DockWorkspaceHost,
+): Promise<boolean> {
+  const shell = webContents.fromId(dockWorkspace.shellWebContentsId);
+  if (shell === undefined || shell.isDestroyed()) return false;
+  const rawBounds = await shell.executeJavaScript(`
+    Array.from(document.querySelectorAll(".dock-tab")).map((element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        panelId: element.dataset.panelId,
+        x: bounds.left,
+        y: bounds.top,
+        width: bounds.width,
+        height: bounds.height,
+      };
+    });
+  `) as unknown;
+  if (!Array.isArray(rawBounds)) return false;
+  const entries = rawBounds.filter((value): value is {
+    readonly panelId: string;
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  } => (
+    typeof value === "object"
+    && value !== null
+    && typeof value.panelId === "string"
+    && ["x", "y", "width", "height"].every((key) => (
+      typeof Reflect.get(value, key) === "number"
+    ))
+  ));
+  const story = entries.find((entry) => entry.panelId === "story-scene");
+  const map = entries.find((entry) => entry.panelId === "map-scene");
+  if (story === undefined || map === undefined) return false;
+  const start = {
+    x: Math.round(map.x + map.width / 2),
+    y: Math.round(map.y + map.height / 2),
+  };
+  const destination = {
+    x: Math.round(story.x + story.width / 2 - 2),
+    y: start.y,
+  };
+  const readDomState = (): Promise<unknown> => shell.executeJavaScript(`
+    ({
+      order: Array.from(document.querySelectorAll(".dock-tab"))
+        .map((element) => element.dataset.panelId),
+      reordering: document.querySelector(".dock-tab--reordering")
+        ?.dataset.panelId ?? null,
+      active: document.querySelector(".dock-tab--active")
+        ?.dataset.panelId ?? null,
+    });
+  `);
+  shell.focus();
+  const debuggerWasAttached = shell.debugger.isAttached();
+  if (!debuggerWasAttached) shell.debugger.attach("1.3");
+  let pointerDownState: unknown;
+  let pointerMoveState: unknown;
+  let pointerUpState: unknown;
+  try {
+    await shell.debugger.sendCommand("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      ...start,
+      button: "left",
+      buttons: 1,
+      clickCount: 1,
+    });
+    await delay(40);
+    pointerDownState = await readDomState();
+    await shell.debugger.sendCommand("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      ...destination,
+      button: "left",
+      buttons: 1,
+    });
+    await delay(80);
+    pointerMoveState = await readDomState();
+    await shell.debugger.sendCommand("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      ...destination,
+      button: "left",
+      buttons: 0,
+      clickCount: 1,
+    });
+    await delay(120);
+    pointerUpState = await readDomState();
+  } finally {
+    if (!debuggerWasAttached && shell.debugger.isAttached()) {
+      shell.debugger.detach();
+    }
+  }
+  const tabs = findTabsNode(dockWorkspace.layout.root, "tabs-scenes");
+  const passed = tabs?.activePanelId === "map-scene"
+    && tabs.panelIds[0] === "map-scene"
+    && tabs.panelIds[1] === "story-scene";
+  if (!passed) {
+    process.stderr.write(`TAB_REORDER_SMOKE_DIAGNOSTIC ${JSON.stringify({
+      entries,
+      start,
+      destination,
+      pointerDownState,
+      pointerMoveState,
+      pointerUpState,
+      layout: tabs,
+    })}\n`);
+  }
+  return passed;
 }
 
 async function runDockCandidateIntegrationSmoke(): Promise<{

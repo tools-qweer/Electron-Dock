@@ -1,6 +1,6 @@
 {
   "name": "@tools-qweer/electron-dock",
-  "version": "0.2.0-alpha.3",
+  "version": "0.2.0-alpha.4",
   "description": "Windows x64 native docking primitives for Electron WebContentsView panels.",
   "license": "MIT",
   "author": "tools-qweer contributors",
@@ -53,8 +53,12 @@
     "native/bin/windows-drag-helper.exe",
     "native/bin/windows-drag-helper.manifest.json",
     "docs/",
+    "examples/",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "SECURITY.md"
   ],
   "os": [
     "win32"
@@ -77,9 +81,11 @@
     "package:consumer": "node scripts/package-consumer.mjs",
     "package:consumer:electron": "node scripts/package-consumer.mjs --electron",
     "pack:dry-run": "npm pack --dry-run --json",
+    "release:check": "npm run check && npm run build && npm run package:check && npm run package:consumer && npm run pack:dry-run && npm audit --audit-level=high",
     "native:refresh-fallback": "node scripts/refresh-native-helper-fallback.mjs",
     "prepare": "npm run build",
-    "prepack": "npm run build && npm run package:check"
+    "prepack": "npm run build && npm run package:check",
+    "prepublishOnly": "npm run release:check"
   },
   "publishConfig": {
     "access": "public",

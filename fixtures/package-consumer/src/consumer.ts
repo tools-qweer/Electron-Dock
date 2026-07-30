@@ -1,6 +1,7 @@
 import {
   createElectronDockRuntime,
   type ElectronDockRuntime,
+  type ElectronDockShellAppearance,
   type ElectronDockWorkspaceOptions,
   type ElectronDockWindowOptions,
 } from "@tools-qweer/electron-dock";
@@ -8,6 +9,7 @@ import type { BrowserWindow } from "electron";
 import {
   createDockLayout,
   createTabsNode,
+  normalizeElectronDockShellAppearance,
   type DockLayoutState,
   type DockPanelDefinition,
 } from "@tools-qweer/electron-dock/core";
@@ -40,7 +42,18 @@ const workspaceOptions: ElectronDockWorkspaceOptions = {
   bounds: { x: 20, y: 30, width: 800, height: 600 },
   panels,
   initialLayout: layout,
+  shellAppearance: {
+    colors: { shellBackground: "#121619" },
+    titleBar: { background: "#1a2024", borderWidth: 0 },
+  },
 };
+const appearance: ElectronDockShellAppearance = {
+  tab: {
+    activeBackground: "#173a34",
+    activeForeground: "#00ffcc",
+  },
+};
+const normalizedAppearance = normalizeElectronDockShellAppearance(appearance);
 const attachWorkspace = runtimeFactory().attachWorkspace;
 
 declare const panelApi: ElectronDockPreloadApi;
@@ -50,7 +63,11 @@ const panelState = panelApi.getPanelState;
 const panelStateChanges = panelApi.onPanelStateChanged;
 const floatPanel = panelApi.floatPanel;
 const redockPanel = panelApi.redockPanel;
-const readPanelSnapshot = panelApi.readPanelSnapshot;
+const floatResult: Promise<PanelStateMessage | null> = panelApi.floatPanel();
+const redockResult: Promise<PanelStateMessage | null> = panelApi.redockPanel();
+
+// @ts-expect-error Renderer snapshots are a smoke-only internal capability.
+panelApi.readPanelSnapshot;
 
 // @ts-expect-error Public panel preloads must not receive shell layout state.
 panelApi.getWorkspaceState;
@@ -64,6 +81,8 @@ void preloadFactory;
 void panelStateIdentity;
 void windowOptions;
 void workspaceOptions;
+void appearance;
+void normalizedAppearance;
 void attachWorkspace;
 void hostState;
 void hostChanges;
@@ -71,4 +90,5 @@ void panelState;
 void panelStateChanges;
 void floatPanel;
 void redockPanel;
-void readPanelSnapshot;
+void floatResult;
+void redockResult;

@@ -23,9 +23,8 @@ export interface ElectronDockPreloadApi {
   onPanelStateChanged(
     listener: (message: PanelStateMessage) => void,
   ): () => void;
-  floatPanel(bounds?: Rectangle): Promise<unknown>;
-  redockPanel(): Promise<unknown>;
-  readPanelSnapshot(): Promise<unknown>;
+  floatPanel(bounds?: Rectangle): Promise<PanelStateMessage | null>;
+  redockPanel(): Promise<PanelStateMessage | null>;
 }
 
 /**
@@ -53,14 +52,11 @@ export function createElectronDockPreloadApi(): ElectronDockPreloadApi {
     ): () => void {
       return subscribe(IPC.panelStateChanged, listener);
     },
-    floatPanel(bounds?: Rectangle): Promise<unknown> {
+    floatPanel(bounds?: Rectangle): Promise<PanelStateMessage | null> {
       return ipcRenderer.invoke(IPC.floatPanel, bounds);
     },
-    redockPanel(): Promise<unknown> {
+    redockPanel(): Promise<PanelStateMessage | null> {
       return ipcRenderer.invoke(IPC.redockPanel);
-    },
-    readPanelSnapshot(): Promise<unknown> {
-      return ipcRenderer.invoke(IPC.panelSnapshot);
     },
   };
 }

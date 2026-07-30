@@ -104,6 +104,40 @@ export function setActivePanel(
   };
 }
 
+/**
+ * Moves one panel inside an existing tab group.
+ *
+ * The destination is the panel's final zero-based index. Invalid identities,
+ * non-integer destinations and no-op moves preserve the original state
+ * reference so callers can avoid publishing or persisting redundant layouts.
+ */
+export function reorderTab(
+  state: DockLayoutState,
+  tabsNodeId: string,
+  panelId: PanelId,
+  targetIndex: number,
+): DockLayoutState {
+  if (!Number.isSafeInteger(targetIndex)) return state;
+  let changed = false;
+  const root = mapDockNode(state.root, (node) => {
+    if (node.type !== "tabs" || node.id !== tabsNodeId) return node;
+    const sourceIndex = node.panelIds.indexOf(panelId);
+    if (sourceIndex < 0) return node;
+    const destination = Math.min(
+      node.panelIds.length - 1,
+      Math.max(0, targetIndex),
+    );
+    if (sourceIndex === destination) return node;
+    const panelIds = [...node.panelIds];
+    const [movedPanelId] = panelIds.splice(sourceIndex, 1);
+    if (movedPanelId === undefined) return node;
+    panelIds.splice(destination, 0, movedPanelId);
+    changed = true;
+    return { ...node, panelIds };
+  });
+  return changed ? { ...state, root } : state;
+}
+
 export function setSplitRatio(
   state: DockLayoutState,
   splitNodeId: string,

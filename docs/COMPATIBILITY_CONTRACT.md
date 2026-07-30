@@ -31,6 +31,8 @@
 13. 挂入消费者已有 `BrowserWindow` 时，库使用独立 Shell View，不重载宿主
     WebContents、不修改菜单、不拦截 close，也不在工作区 dispose 时关闭或
     销毁宿主窗口。
+14. 同一标签组内拖动换位时，预览顺序、活动 Panel 和最终持久化顺序一致；
+    取消或按 Escape 不得提交，也不得重建业务 WebContents。
 
 ## 非阻断扩展
 

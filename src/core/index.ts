@@ -3,3 +3,4 @@ export * from "./layout.js";
 export * from "./layout-geometry.js";
 export * from "./layout-persistence.js";
 export * from "./types.js";
+export * from "../shared/shell-appearance.js";

@@ -12,10 +12,30 @@ export {
   type ElectronDockWorkspaceOptions,
   type ElectronDockWorkspaceSnapshot,
 } from "../main/public-runtime.js";
+export {
+  DEFAULT_ELECTRON_DOCK_SHELL_APPEARANCE,
+  normalizeElectronDockShellAppearance,
+  type ElectronDockColorScheme,
+  type ElectronDockShellAppearance,
+  type ElectronDockShellColors,
+  type ElectronDockShellFont,
+  type ElectronDockShellSplitterAppearance,
+  type ElectronDockShellTabAppearance,
+  type ElectronDockShellTabBarAppearance,
+  type ElectronDockShellTitleBarAppearance,
+  type ElectronDockShellTopBarAppearance,
+  type NormalizedElectronDockShellAppearance,
+} from "../shared/shell-appearance.js";
 export type { DockPanelContentOptions } from "../main/dock-host.js";
-export type {
-  AtomicLayoutTextStorage,
-  DockLayoutPersistenceEnvelopeV1,
+export {
+  DOCK_LAYOUT_PERSISTENCE_SCHEMA,
+  DOCK_LAYOUT_PERSISTENCE_VERSION,
+  parseDockLayoutPersistence,
+  persistDockLayout,
+  restorePersistedDockLayout,
+  serializeDockLayoutPersistence,
+  type AtomicLayoutTextStorage,
+  type DockLayoutPersistenceEnvelopeV1,
 } from "../core/layout-persistence.js";
 export type {
   DockDropPosition,

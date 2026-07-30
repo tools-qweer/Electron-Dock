@@ -42,7 +42,6 @@ describe("Electron Dock preload API boundaries", () => {
       "getPanelState",
       "onHostChanged",
       "onPanelStateChanged",
-      "readPanelSnapshot",
       "redockPanel",
     ]);
 
@@ -50,7 +49,6 @@ describe("Electron Dock preload API boundaries", () => {
     await api.getPanelState();
     await api.floatPanel({ x: 1, y: 2, width: 320, height: 240 });
     await api.redockPanel();
-    await api.readPanelSnapshot();
 
     expect(electronMocks.invoke).toHaveBeenNthCalledWith(
       1,
@@ -66,7 +64,6 @@ describe("Electron Dock preload API boundaries", () => {
       { x: 1, y: 2, width: 320, height: 240 },
     );
     expect(electronMocks.invoke).toHaveBeenNthCalledWith(4, IPC.redockPanel);
-    expect(electronMocks.invoke).toHaveBeenNthCalledWith(5, IPC.panelSnapshot);
   });
 
   it("keeps workspace, resize and drag authority in the internal preload", () => {
@@ -84,16 +81,23 @@ describe("Electron Dock preload API boundaries", () => {
       "onWorkspaceState",
       "readPanelSnapshot",
       "redockPanel",
+      "reorderTab",
       "setActivePanel",
       "setSplitRatio",
     ]);
 
     api.setActivePanel({ tabsNodeId: "tabs-1", panelId: "panel-1" });
+    api.reorderTab({
+      tabsNodeId: "tabs-1",
+      panelId: "panel-1",
+      targetIndex: 0,
+    });
     api.setSplitRatio({ splitNodeId: "split-1", ratio: 0.4 });
     api.beginPanelDrag({
       panelId: "panel-1",
       anchor: { x: 10, y: 12 },
     });
+    void api.readPanelSnapshot();
 
     expect(electronMocks.send).toHaveBeenNthCalledWith(
       1,
@@ -102,13 +106,23 @@ describe("Electron Dock preload API boundaries", () => {
     );
     expect(electronMocks.send).toHaveBeenNthCalledWith(
       2,
+      IPC.reorderTab,
+      {
+        tabsNodeId: "tabs-1",
+        panelId: "panel-1",
+        targetIndex: 0,
+      },
+    );
+    expect(electronMocks.send).toHaveBeenNthCalledWith(
+      3,
       IPC.setSplitRatio,
       { splitNodeId: "split-1", ratio: 0.4 },
     );
     expect(electronMocks.send).toHaveBeenNthCalledWith(
-      3,
+      4,
       IPC.beginPanelDrag,
       { panelId: "panel-1", anchor: { x: 10, y: 12 } },
     );
+    expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.panelSnapshot);
   });
 });

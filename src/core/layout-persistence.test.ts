@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   DOCK_LAYOUT_PERSISTENCE_SCHEMA,
   DOCK_LAYOUT_PERSISTENCE_VERSION,
+  parseDockLayoutPersistence,
   persistDockLayout,
   restorePersistedDockLayout,
+  serializeDockLayoutPersistence,
   type AtomicLayoutTextStorage,
 } from "./layout-persistence.js";
 import {
@@ -11,6 +13,8 @@ import {
   createDockLayout,
   createTabsNode,
   floatPanel,
+  findTabsNode,
+  reorderTab,
 } from "./layout.js";
 import type { DockLayoutState, DockPanelDefinition } from "./types.js";
 
@@ -55,6 +59,12 @@ class MemoryAtomicStorage implements AtomicLayoutTextStorage {
 }
 
 describe("layout persistence", () => {
+  it("keeps the exact v1 JSON byte representation", () => {
+    expect(serializeDockLayoutPersistence(createFallback())).toBe(
+      '{"schema":"electron-native-dock/layout","schemaVersion":1,"layout":{"version":1,"nextNodeSequence":1,"root":{"type":"tabs","id":"tabs-fallback","panelIds":["hierarchy","story","map"],"activePanelId":"hierarchy"},"floating":[]}}',
+    );
+  });
+
   it("writes one complete versioned document through the atomic storage API", async () => {
     const storage = new MemoryAtomicStorage();
     const layout = floatPanel(
@@ -66,11 +76,108 @@ describe("layout persistence", () => {
     await persistDockLayout(storage, layout);
 
     expect(storage.writes).toBe(1);
+    expect(storage.committed).toBe(serializeDockLayoutPersistence(layout));
     expect(JSON.parse(storage.committed!)).toEqual({
       schema: DOCK_LAYOUT_PERSISTENCE_SCHEMA,
       schemaVersion: DOCK_LAYOUT_PERSISTENCE_VERSION,
       layout,
     });
+  });
+
+  it("safely parses supported documents without retaining object references", () => {
+    const source = {
+      schema: DOCK_LAYOUT_PERSISTENCE_SCHEMA,
+      schemaVersion: DOCK_LAYOUT_PERSISTENCE_VERSION,
+      layout: createFallback(),
+    };
+
+    const parsed = parseDockLayoutPersistence(source);
+
+    expect(parsed).toEqual(source);
+    expect(parsed).not.toBe(source);
+    expect(parsed?.layout).not.toBe(source.layout);
+    expect(parsed?.layout.root).not.toBe(source.layout.root);
+
+    const sourceRoot = source.layout.root;
+    if (sourceRoot?.type !== "tabs") {
+      throw new Error("Expected the test fixture to contain one tabs node");
+    }
+    (sourceRoot.panelIds as string[])[0] = "mutated-source";
+    expect(parsed?.layout.root).toMatchObject({
+      type: "tabs",
+      panelIds: ["hierarchy", "story", "map"],
+    });
+  });
+
+  it.each([
+    ["malformed JSON", "{not-json"],
+    ["non-JSON value", undefined],
+    [
+      "wrong schema",
+      {
+        schema: "another-library/layout",
+        schemaVersion: DOCK_LAYOUT_PERSISTENCE_VERSION,
+        layout: createFallback(),
+      },
+    ],
+    [
+      "unknown persistence version",
+      {
+        schema: DOCK_LAYOUT_PERSISTENCE_SCHEMA,
+        schemaVersion: 2,
+        layout: createFallback(),
+      },
+    ],
+    [
+      "unknown layout version",
+      {
+        schema: DOCK_LAYOUT_PERSISTENCE_SCHEMA,
+        schemaVersion: DOCK_LAYOUT_PERSISTENCE_VERSION,
+        layout: { ...createFallback(), version: 2 },
+      },
+    ],
+    [
+      "incomplete layout",
+      {
+        schema: DOCK_LAYOUT_PERSISTENCE_SCHEMA,
+        schemaVersion: DOCK_LAYOUT_PERSISTENCE_VERSION,
+        layout: { version: 1 },
+      },
+    ],
+    [
+      "malformed nested node",
+      {
+        schema: DOCK_LAYOUT_PERSISTENCE_SCHEMA,
+        schemaVersion: DOCK_LAYOUT_PERSISTENCE_VERSION,
+        layout: {
+          ...createFallback(),
+          root: {
+            type: "split",
+            id: "split-invalid",
+            axis: "horizontal",
+            ratio: 0.5,
+            first: createFallback().root,
+          },
+        },
+      },
+    ],
+    [
+      "non-finite floating bounds",
+      {
+        schema: DOCK_LAYOUT_PERSISTENCE_SCHEMA,
+        schemaVersion: DOCK_LAYOUT_PERSISTENCE_VERSION,
+        layout: {
+          ...createFallback(),
+          root: null,
+          floating: [{
+            panelId: "hierarchy",
+            bounds: { x: 0, y: 0, width: Number.NaN, height: 400 },
+          }],
+        },
+      },
+    ],
+  ])("returns null for %s", (_label, value) => {
+    expect(parseDockLayoutPersistence(value)).toBeNull();
   });
 
   it("does not replace the committed document when an atomic write fails", async () => {
@@ -124,6 +231,34 @@ describe("layout persistence", () => {
     ]);
     expect(restored.nextNodeSequence).toBe(8);
     expect(storage.reads).toBe(1);
+  });
+
+  it("persists and restores tab order together with the active panel", async () => {
+    const storage = new MemoryAtomicStorage();
+    const reordered = reorderTab(
+      createDockLayout(
+        createTabsNode(
+          "tabs-scenes",
+          ["hierarchy", "story", "map"],
+          "story",
+        ),
+      ),
+      "tabs-scenes",
+      "map",
+      0,
+    );
+
+    await persistDockLayout(storage, reordered);
+    const restored = await restorePersistedDockLayout(
+      storage,
+      panels,
+      createFallback(),
+    );
+
+    expect(findTabsNode(restored.root, "tabs-scenes")).toMatchObject({
+      panelIds: ["map", "hierarchy", "story"],
+      activePanelId: "story",
+    });
   });
 
   it.each([
