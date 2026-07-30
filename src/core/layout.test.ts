@@ -6,7 +6,9 @@ import {
   createSplitNode,
   createTabsNode,
   dockPanel,
+  findTabsNode,
   floatPanel,
+  reorderTab,
   restoreDockLayout,
   setActivePanel,
   setSplitRatio,
@@ -74,6 +76,41 @@ describe("dock layout", () => {
       expect.arrayContaining(["story", "map", "inspector"]),
     );
     expect(() => assertDockLayoutInvariants(active, panels)).not.toThrow();
+  });
+
+  it("reorders one tab inside its group without changing the active panel", () => {
+    const state = initialState();
+    const next = reorderTab(state, "tabs-2", "map", 0);
+
+    expect(findTabsNode(state.root, "tabs-2")).toMatchObject({
+      panelIds: ["story", "map"],
+      activePanelId: "story",
+    });
+    expect(findTabsNode(next.root, "tabs-2")).toMatchObject({
+      panelIds: ["map", "story"],
+      activePanelId: "story",
+    });
+    expect(next.nextNodeSequence).toBe(state.nextNodeSequence);
+    expect(next.floating).toBe(state.floating);
+    expect(() => assertDockLayoutInvariants(next, panels)).not.toThrow();
+  });
+
+  it("clamps tab destinations and keeps invalid or unchanged moves referentially stable", () => {
+    const state = initialState();
+
+    expect(reorderTab(state, "tabs-2", "story", 99)).toMatchObject({
+      root: expect.objectContaining({ type: "split" }),
+    });
+    expect(
+      findTabsNode(
+        reorderTab(state, "tabs-2", "story", 99).root,
+        "tabs-2",
+      )?.panelIds,
+    ).toEqual(["map", "story"]);
+    expect(reorderTab(state, "tabs-2", "story", 0)).toBe(state);
+    expect(reorderTab(state, "missing", "story", 1)).toBe(state);
+    expect(reorderTab(state, "tabs-2", "missing", 1)).toBe(state);
+    expect(reorderTab(state, "tabs-2", "story", Number.NaN)).toBe(state);
   });
 
   it("wraps the complete workspace when a panel is dropped on a workspace edge", () => {

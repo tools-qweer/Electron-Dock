@@ -5,11 +5,15 @@ import type {
   Rectangle,
 } from "../core/types.js";
 import type { DockLayoutGeometry } from "../core/layout-geometry.js";
+import type {
+  NormalizedElectronDockShellAppearance,
+} from "./shell-appearance.js";
 
 export const IPC = {
   workspaceState: "electron-dock:workspace-state",
   getWorkspaceState: "electron-dock:get-workspace-state",
   setActivePanel: "electron-dock:set-active-panel",
+  reorderTab: "electron-dock:reorder-tab",
   setSplitRatio: "electron-dock:set-split-ratio",
   floatPanel: "electron-dock:float-panel",
   redockPanel: "electron-dock:redock-panel",
@@ -29,11 +33,18 @@ export interface WorkspaceStateMessage {
   readonly layout: DockLayoutState;
   readonly geometry: DockLayoutGeometry;
   readonly interactionEnabled: boolean;
+  readonly shellAppearance: NormalizedElectronDockShellAppearance;
 }
 
 export interface SetActivePanelMessage {
   readonly tabsNodeId: string;
   readonly panelId: string;
+}
+
+export interface ReorderTabMessage {
+  readonly tabsNodeId: string;
+  readonly panelId: string;
+  readonly targetIndex: number;
 }
 
 export interface SetSplitRatioMessage {
@@ -134,6 +145,19 @@ export function isSetActivePanelMessage(
   const message = value as Partial<SetActivePanelMessage>;
   return typeof message.tabsNodeId === "string"
     && typeof message.panelId === "string";
+}
+
+export function isReorderTabMessage(
+  value: unknown,
+): value is ReorderTabMessage {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const message = value as Partial<ReorderTabMessage>;
+  return typeof message.tabsNodeId === "string"
+    && typeof message.panelId === "string"
+    && Number.isSafeInteger(message.targetIndex)
+    && (message.targetIndex ?? -1) >= 0;
 }
 
 export function isSetSplitRatioMessage(

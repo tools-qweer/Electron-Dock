@@ -37,6 +37,7 @@ try {
     "panelCountCorrect",
     "panelWebContentsUnique",
     "tabSwitchCorrect",
+    "tabReorderCorrect",
     "inactiveWebContentsPreserved",
     "splitResizeCorrect",
     "edgePreviewSlotIsEmpty",

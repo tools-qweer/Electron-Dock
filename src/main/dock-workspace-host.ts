@@ -17,6 +17,7 @@ import {
   dockPanel as reduceDockPanel,
   floatPanel as reduceFloatPanel,
   removePanel,
+  reorderTab as reduceReorderTab,
   setActivePanel,
   setSplitRatio,
   type DockPanelInsertionOptions,
@@ -40,6 +41,12 @@ import {
   type PanelStateMessage,
   type WorkspaceStateMessage,
 } from "../shared/protocol.js";
+import {
+  electronDockShellAppearancesEqual,
+  normalizeElectronDockShellAppearance,
+  type ElectronDockShellAppearance,
+  type NormalizedElectronDockShellAppearance,
+} from "../shared/shell-appearance.js";
 import {
   DockPanelHost,
   type DockPanelContentOptions,
@@ -83,6 +90,7 @@ export interface DockWorkspaceHostOptions {
    */
   readonly storage?: AtomicLayoutTextStorageContract;
   readonly layoutFilePath?: string;
+  readonly shellAppearance?: ElectronDockShellAppearance | null;
   /**
    * Creates a library-owned shell WebContentsView inside an existing window.
    *
@@ -165,6 +173,7 @@ export class DockWorkspaceHost {
   #workspaceFrame: Rectangle | null;
   #visible: boolean;
   #interactionEnabled: boolean;
+  #shellAppearance: NormalizedElectronDockShellAppearance;
   #shellAttached = false;
   #shellLoaded = false;
   #overlayLoaded = false;
@@ -242,6 +251,9 @@ export class DockWorkspaceHost {
       options.onPanelWebContentsDisposed;
     this.#visible = shellOptions?.visible ?? true;
     this.#interactionEnabled = shellOptions?.interactionEnabled ?? true;
+    this.#shellAppearance = normalizeElectronDockShellAppearance(
+      options.shellAppearance,
+    );
 
     if (shellOptions === undefined) {
       this.#shellView = null;
@@ -253,6 +265,10 @@ export class DockWorkspaceHost {
         "shellHeaderHeight",
         String(this.#shellHeaderHeight),
       );
+      shellUrl.searchParams.set(
+        "shellAppearance",
+        JSON.stringify(this.#shellAppearance),
+      );
       this.#shellRendererUrl = shellUrl.href;
       this.#shellView = new WebContentsView({
         webPreferences: {
@@ -262,8 +278,13 @@ export class DockWorkspaceHost {
           preload: options.preloadPath,
         },
       });
-      this.#shellView.setBackgroundColor("#101313");
-      this.#shellView.setVisible(this.#visible);
+      this.#shellView.setBackgroundColor(
+        this.#shellAppearance.colors.shellBackground,
+      );
+      // Keep the private shell hidden until its first document has applied the
+      // appearance carried in the initial URL. This prevents a default-theme
+      // frame from flashing in an attached consumer window.
+      this.#shellView.setVisible(false);
       this.#shellView.webContents.setWindowOpenHandler(() => ({
         action: "deny",
       }));
@@ -376,6 +397,7 @@ export class DockWorkspaceHost {
           .loadURL(this.#shellRendererUrl)
           .then(() => {
             this.#shellLoaded = true;
+            this.#shellView?.setVisible(this.#visible);
           });
       await Promise.all([
         ...this.hosts.map((host) => host.load()),
@@ -403,6 +425,7 @@ export class DockWorkspaceHost {
       layout: this.#layout,
       geometry: this.#previewGeometry ?? this.#geometry,
       interactionEnabled: this.#interactionEnabled,
+      shellAppearance: this.#shellAppearance,
     };
   }
 
@@ -447,7 +470,7 @@ export class DockWorkspaceHost {
     if (this.#disposed || this.#visible === visible) return;
     this.#visible = visible;
     if (this.#shellView !== null && !this.#shellView.webContents.isDestroyed()) {
-      this.#shellView.setVisible(visible);
+      this.#shellView.setVisible(visible && this.#shellLoaded);
     }
     if (!visible) this.#detachOverlay();
     for (const host of this.#hosts.values()) {
@@ -460,6 +483,24 @@ export class DockWorkspaceHost {
     if (this.#disposed || this.#interactionEnabled === enabled) return;
     this.#interactionEnabled = enabled;
     if (!enabled) this.clearDragPreview();
+    this.#publishState();
+  }
+
+  setShellAppearance(
+    appearance: ElectronDockShellAppearance | null,
+  ): void {
+    if (this.#disposed) return;
+    const next = normalizeElectronDockShellAppearance(appearance);
+    if (electronDockShellAppearancesEqual(this.#shellAppearance, next)) return;
+    this.#shellAppearance = next;
+    if (
+      this.#shellView !== null
+      && !this.#shellView.webContents.isDestroyed()
+    ) {
+      this.#shellView.setBackgroundColor(
+        next.colors.shellBackground,
+      );
+    }
     this.#publishState();
   }
 
@@ -522,6 +563,21 @@ export class DockWorkspaceHost {
   activatePanel(tabsNodeId: string, panelId: PanelId): void {
     const next = setActivePanel(this.#layout, tabsNodeId, panelId);
     if (next.root === this.#layout.root) return;
+    this.#commitLayout(next);
+  }
+
+  reorderTab(
+    tabsNodeId: string,
+    panelId: PanelId,
+    targetIndex: number,
+  ): void {
+    const next = reduceReorderTab(
+      this.#layout,
+      tabsNodeId,
+      panelId,
+      targetIndex,
+    );
+    if (next === this.#layout) return;
     this.#commitLayout(next);
   }
 
@@ -1145,7 +1201,7 @@ export class DockWorkspaceHost {
       return;
     }
     this.#shellView.setBounds(this.bounds);
-    this.#shellView.setVisible(this.#visible);
+    this.#shellView.setVisible(this.#visible && this.#shellLoaded);
   }
 
   #handleWorkspaceGeometryChange(): void {

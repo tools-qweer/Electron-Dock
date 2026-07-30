@@ -17,9 +17,21 @@ import type {
   HostChangedMessage,
   WorkspaceStateMessage,
 } from "../shared/protocol.js";
+import {
+  completeTabReorderSession,
+  createTabReorderSession,
+  reorderPanelIds,
+  updateTabReorderSession,
+  type TabReorderSession,
+} from "./tab-reorder.js";
+import {
+  applyShellAppearanceVariables,
+  shellAppearanceFromSearch,
+} from "./shell-appearance.js";
 
 const parameters = new URLSearchParams(location.search);
 const mode = parameters.get("mode") ?? "shell";
+const initialShellAppearance = shellAppearanceFromSearch(location.search);
 const shellHeaderHeight = Math.max(
   0,
   Number(parameters.get("shellHeaderHeight") ?? "44") || 0,
@@ -30,6 +42,14 @@ const shellHeaderHeight = Math.max(
 const DOCK_DRAG_START_DISTANCE_DIP = 10;
 
 document.documentElement.dataset.mode = mode;
+if (mode === "shell") {
+  // This runs before React mounts. Combined with the main-process load gate it
+  // makes the configured shell appearance the first visible frame.
+  applyShellAppearanceVariables(
+    document.documentElement.style,
+    initialShellAppearance,
+  );
+}
 
 function useWorkspaceState(): WorkspaceStateMessage | null {
   const [workspace, setWorkspace] = useState<WorkspaceStateMessage | null>(null);
@@ -37,10 +57,22 @@ function useWorkspaceState(): WorkspaceStateMessage | null {
   useEffect(() => {
     let active = true;
     const unsubscribe = window.electronDock.onWorkspaceState((message) => {
-      if (active) setWorkspace(message);
+      if (active) {
+        applyShellAppearanceVariables(
+          document.documentElement.style,
+          message.shellAppearance,
+        );
+        setWorkspace(message);
+      }
     });
     void window.electronDock.getWorkspaceState().then((message) => {
-      if (active && message !== null) setWorkspace(message);
+      if (active && message !== null) {
+        applyShellAppearanceVariables(
+          document.documentElement.style,
+          message.shellAppearance,
+        );
+        setWorkspace(message);
+      }
     });
     return () => {
       active = false;
@@ -190,22 +222,209 @@ function DockTabStrip({
   geometry,
   panelTitles,
 }: DockTabStripProps): React.JSX.Element {
+  const stripRef = useRef<HTMLElement>(null);
+  const sessionRef = useRef<TabReorderSession | null>(null);
+  const previewOrderRef = useRef<readonly string[] | null>(null);
+  const pendingOrderRef = useRef<readonly string[] | null>(null);
+  const pendingTimerRef = useRef<number | null>(null);
+  const suppressClickRef = useRef<string | null>(null);
+  const cancelDragRef = useRef<(() => void) | null>(null);
+  const [previewOrder, setPreviewOrder] = useState<readonly string[] | null>(
+    null,
+  );
+  const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null);
+  const displayedPanelIds = previewOrder ?? geometry.panelIds;
+
+  useEffect(() => {
+    const pending = pendingOrderRef.current;
+    if (pending === null || !samePanelOrder(pending, geometry.panelIds)) return;
+    pendingOrderRef.current = null;
+    previewOrderRef.current = null;
+    if (pendingTimerRef.current !== null) {
+      window.clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = null;
+    }
+    setPreviewOrder(null);
+  }, [geometry.panelIds]);
+
+  useEffect(() => () => {
+    cancelDragRef.current?.();
+    if (pendingTimerRef.current !== null) {
+      window.clearTimeout(pendingTimerRef.current);
+    }
+  }, []);
+
+  const beginReorder = (
+    event: React.PointerEvent<HTMLButtonElement>,
+    panelId: string,
+  ): void => {
+    if (event.button !== 0 || sessionRef.current !== null) return;
+    const sourceIndex = displayedPanelIds.indexOf(panelId);
+    const strip = stripRef.current;
+    if (sourceIndex < 0 || strip === null) return;
+
+    // Keep pointer capture on the stable strip. The dragged button changes
+    // position during the preview render and Chromium releases capture when
+    // the captured element is moved in the DOM.
+    const captureOwner = strip;
+    const pointerId = event.pointerId;
+    let session = createTabReorderSession(
+      panelId,
+      event.clientX,
+      event.clientY,
+      sourceIndex,
+    );
+    let finished = false;
+    const initialOrder = [...displayedPanelIds];
+    sessionRef.current = session;
+    previewOrderRef.current = initialOrder;
+    setPreviewOrder(initialOrder);
+    setDraggingPanelId(panelId);
+
+    const cleanup = (cancelled: boolean): void => {
+      if (finished) return;
+      finished = true;
+      captureOwner.removeEventListener("pointermove", handleMove);
+      captureOwner.removeEventListener("pointerup", handleRelease);
+      captureOwner.removeEventListener("pointercancel", handleCancel);
+      captureOwner.removeEventListener(
+        "lostpointercapture",
+        handleLostCapture,
+      );
+      window.removeEventListener("keydown", handleKeyDown, true);
+      cancelDragRef.current = null;
+      sessionRef.current = null;
+      setDraggingPanelId(null);
+      if (captureOwner.hasPointerCapture(pointerId)) {
+        captureOwner.releasePointerCapture(pointerId);
+      }
+
+      const completion = completeTabReorderSession(session, cancelled);
+      if (completion.targetIndex === null) {
+        previewOrderRef.current = null;
+        setPreviewOrder(null);
+      } else {
+        const committedOrder = previewOrderRef.current ?? initialOrder;
+        pendingOrderRef.current = committedOrder;
+        window.electronDock.reorderTab({
+          tabsNodeId: geometry.tabsNodeId,
+          panelId,
+          targetIndex: completion.targetIndex,
+        });
+        if (pendingTimerRef.current !== null) {
+          window.clearTimeout(pendingTimerRef.current);
+        }
+        pendingTimerRef.current = window.setTimeout(() => {
+          if (pendingOrderRef.current !== committedOrder) return;
+          pendingOrderRef.current = null;
+          previewOrderRef.current = null;
+          pendingTimerRef.current = null;
+          setPreviewOrder(null);
+        }, 750);
+      }
+
+      if (completion.suppressClick) {
+        suppressClickRef.current = panelId;
+        window.setTimeout(() => {
+          if (suppressClickRef.current === panelId) {
+            suppressClickRef.current = null;
+          }
+        }, 0);
+      }
+    };
+
+    const handleMove = (pointerEvent: PointerEvent): void => {
+      if (pointerEvent.pointerId !== pointerId || finished) return;
+      const tabCenters = Array.from(
+        strip.querySelectorAll<HTMLElement>(".dock-tab"),
+        (tab) => {
+          const bounds = tab.getBoundingClientRect();
+          return bounds.left + bounds.width / 2;
+        },
+      );
+      const previous = session;
+      session = updateTabReorderSession(
+        session,
+        pointerEvent.clientX,
+        pointerEvent.clientY,
+        tabCenters,
+      );
+      sessionRef.current = session;
+      if (!previous.started && session.started) {
+        window.electronDock.setActivePanel({
+          tabsNodeId: geometry.tabsNodeId,
+          panelId,
+        });
+      }
+      if (session.currentIndex !== previous.currentIndex) {
+        const nextOrder = reorderPanelIds(
+          previewOrderRef.current ?? initialOrder,
+          panelId,
+          session.currentIndex,
+        );
+        previewOrderRef.current = nextOrder;
+        setPreviewOrder(nextOrder);
+      }
+      if (session.started) pointerEvent.preventDefault();
+    };
+
+    const handleRelease = (pointerEvent: PointerEvent): void => {
+      if (pointerEvent.pointerId === pointerId) cleanup(false);
+    };
+    const handleCancel = (pointerEvent: PointerEvent): void => {
+      if (pointerEvent.pointerId === pointerId) cleanup(true);
+    };
+    const handleLostCapture = (pointerEvent: PointerEvent): void => {
+      if (pointerEvent.pointerId === pointerId) cleanup(true);
+    };
+    const handleKeyDown = (keyboardEvent: KeyboardEvent): void => {
+      if (keyboardEvent.key !== "Escape") return;
+      keyboardEvent.preventDefault();
+      keyboardEvent.stopPropagation();
+      cleanup(true);
+    };
+
+    cancelDragRef.current = () => cleanup(true);
+    captureOwner.setPointerCapture(pointerId);
+    captureOwner.addEventListener("pointermove", handleMove);
+    captureOwner.addEventListener("pointerup", handleRelease);
+    captureOwner.addEventListener("pointercancel", handleCancel);
+    captureOwner.addEventListener("lostpointercapture", handleLostCapture);
+    window.addEventListener("keydown", handleKeyDown, true);
+  };
+
   return (
     <nav
+      ref={stripRef}
       className="dock-tabs"
       style={rectangleStyle(geometry.bounds)}
       aria-label="面板标签"
     >
-      {geometry.panelIds.map((panelId) => (
+      {displayedPanelIds.map((panelId) => (
         <button
           key={panelId}
           type="button"
-          className={
+          data-panel-id={panelId}
+          className={[
+            "dock-tab",
             panelId === geometry.activePanelId
-              ? "dock-tab dock-tab--active"
-              : "dock-tab"
-          }
-          onClick={() => {
+              ? "dock-tab--active"
+              : "",
+            panelId === draggingPanelId
+              ? "dock-tab--reordering"
+              : "",
+          ].filter(Boolean).join(" ")}
+          aria-pressed={panelId === geometry.activePanelId}
+          onPointerDown={(event) => {
+            beginReorder(event, panelId);
+          }}
+          onClick={(event) => {
+            if (suppressClickRef.current === panelId) {
+              suppressClickRef.current = null;
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
             window.electronDock.setActivePanel({
               tabsNodeId: geometry.tabsNodeId,
               panelId,
@@ -217,6 +436,14 @@ function DockTabStrip({
       ))}
     </nav>
   );
+}
+
+function samePanelOrder(
+  first: readonly string[],
+  second: readonly string[],
+): boolean {
+  return first.length === second.length
+    && first.every((panelId, index) => panelId === second[index]);
 }
 
 interface DockSplitterProps {

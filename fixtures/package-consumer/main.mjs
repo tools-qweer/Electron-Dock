@@ -46,7 +46,6 @@ async function run() {
     "getPanelState",
     "onHostChanged",
     "onPanelStateChanged",
-    "readPanelSnapshot",
     "redockPanel",
   ];
   if (
@@ -124,6 +123,25 @@ async function run() {
     id: "tgz-attached",
     window: ownerWindow,
     bounds: { x: 40, y: 36, width: 720, height: 500 },
+    shellAppearance: {
+      colors: {
+        shellBackground: "#121619",
+        foreground: "#e7edf0",
+      },
+      titleBar: {
+        background: "#1a2024",
+        borderWidth: 0,
+        bottomBorderColor: "#35505a",
+        bottomBorderWidth: 1,
+      },
+      tabBar: {
+        borderWidth: 0,
+        topBorderWidth: 1,
+      },
+      tab: {
+        activeForeground: "#65f7d4",
+      },
+    },
     panels: [
       {
         id: "consumer-panel",
@@ -219,6 +237,10 @@ async function run() {
     || attachedPanel.requestedVisible !== true
     || attachedPanel.visible !== true
     || attachedPanel.webContentsId === ownerWebContentsId
+    || initialAttached.shellAppearance.colors.shellBackground !== "#121619"
+    || initialAttached.shellAppearance.titleBar.background !== "#1a2024"
+    || initialAttached.shellAppearance.titleBar.borderWidth !== 0
+    || initialAttached.shellAppearance.tabBar.borderWidth !== 0
   ) {
     throw new Error(
       "Unexpected initial attached snapshot: "
@@ -230,6 +252,38 @@ async function run() {
   const unsubscribeAttached = attached.onDidChange(() => {
     attachedChanges += 1;
   });
+  const appearanceLayout = JSON.stringify(initialAttached.layout);
+  const appearancePanelWebContentsId = attachedPanel.webContentsId;
+  attached.setShellAppearance({
+    colors: { shellBackground: "#202830" },
+    splitter: { hoverBackground: "#8090a0" },
+  });
+  const changedAppearance = attached.snapshot();
+  if (
+    changedAppearance.shellAppearance.colors.shellBackground !== "#202830"
+    || changedAppearance.shellAppearance.splitter.hoverBackground !== "#8090a0"
+    || JSON.stringify(changedAppearance.layout) !== appearanceLayout
+    || changedAppearance.panels[0]?.webContentsId
+      !== appearancePanelWebContentsId
+  ) {
+    throw new Error(
+      "Dynamic shell appearance recreated state: "
+      + JSON.stringify(changedAppearance),
+    );
+  }
+  attached.setShellAppearance(null);
+  const resetAppearance = attached.snapshot();
+  if (
+    resetAppearance.shellAppearance.colors.shellBackground !== "#101313"
+    || JSON.stringify(resetAppearance.layout) !== appearanceLayout
+    || resetAppearance.panels[0]?.webContentsId
+      !== appearancePanelWebContentsId
+  ) {
+    throw new Error(
+      "Reset shell appearance did not restore stable defaults: "
+      + JSON.stringify(resetAppearance),
+    );
+  }
   attached.setBounds({ x: 52, y: 48, width: 680, height: 450 });
   attached.setInteractionEnabled(false);
   attached.setVisible(false);
@@ -271,12 +325,24 @@ async function run() {
     throw new Error("Disabled workspace accepted a panel-originated float");
   }
   attached.setInteractionEnabled(true);
-  attached.float(
-    "consumer-panel",
-    { x: 120, y: 120, width: 420, height: 300 },
+  const floatedState = await createdPanelEvent.webContents.executeJavaScript(
+    "window.electronDock.floatPanel("
+      + "{ x: 120, y: 120, width: 420, height: 300 })",
+    true,
   );
-  if (attached.snapshot().panels[0]?.host !== "floating") {
-    throw new Error("Attached panel did not float");
+  if (
+    floatedState?.panelId !== "consumer-panel"
+    || floatedState.host !== "floating"
+    || floatedState.active !== true
+    || floatedState.requestedVisible !== true
+    || floatedState.visible !== true
+    || floatedState.webContentsId !== originalPanelWebContentsId
+    || attached.snapshot().panels[0]?.host !== "floating"
+  ) {
+    throw new Error(
+      "Public preload float returned an unstable panel state: "
+      + JSON.stringify(floatedState),
+    );
   }
   attached.setVisible(false);
   const deniedRedock = await createdPanelEvent.webContents.executeJavaScript(
@@ -290,18 +356,30 @@ async function run() {
     throw new Error("Hidden workspace accepted a panel-originated redock");
   }
   attached.setVisible(true);
-  attached.redock("consumer-panel");
+  const redockState = await createdPanelEvent.webContents.executeJavaScript(
+    "window.electronDock.redockPanel()",
+    true,
+  );
   const redockedPanel = attached.snapshot().panels[0];
   if (
-    redockedPanel?.host !== "docked"
+    redockState?.panelId !== "consumer-panel"
+    || redockState.host !== "docked"
+    || redockState.active !== true
+    || redockState.requestedVisible !== true
+    || redockState.visible !== true
+    || redockState.webContentsId !== originalPanelWebContentsId
+    || redockedPanel?.host !== "docked"
     || redockedPanel.webContentsId !== originalPanelWebContentsId
   ) {
-    throw new Error("Attached panel redock recreated its WebContents");
+    throw new Error(
+      "Public preload redock returned an unstable panel state: "
+      + JSON.stringify(redockState),
+    );
   }
   attached.reset();
   await attached.flush();
   unsubscribeAttached();
-  if (attachedChanges < 6) {
+  if (attachedChanges < 8) {
     throw new Error(
       `Attached workspace emitted too few changes: ${attachedChanges}`,
     );
@@ -346,6 +424,12 @@ async function run() {
       },
     ],
     initialLayout,
+    shellAppearance: {
+      tab: {
+        activeBackground: "#26383d",
+        activeForeground: "#72f5da",
+      },
+    },
     windowOptions: {
       width: 720,
       height: 480,
@@ -358,6 +442,20 @@ async function run() {
   }
   if (dockWindow.window.isVisible()) {
     throw new Error("show:false consumer window unexpectedly became visible");
+  }
+  const ownedPanelWebContentsId =
+    dockWindow.snapshot().panels[0]?.webContentsId;
+  const ownedLayout = JSON.stringify(dockWindow.snapshot().layout);
+  dockWindow.setShellAppearance({
+    titleBar: { background: "#24292d" },
+  });
+  if (
+    dockWindow.snapshot().shellAppearance.titleBar.background !== "#24292d"
+    || dockWindow.snapshot().panels[0]?.webContentsId
+      !== ownedPanelWebContentsId
+    || JSON.stringify(dockWindow.snapshot().layout) !== ownedLayout
+  ) {
+    throw new Error("Owned-window appearance update recreated Dock state");
   }
 
   stage = "dispose";

@@ -1,190 +1,86 @@
-# @tools-qweer/electron-dock
+# Electron Dock
 
-Windows x64 原生 Electron 停靠组件。它让同一个持久
-`WebContentsView` 面板在主窗口停靠区和真实 `BaseWindow` 浮窗之间迁移，
-不通过销毁、重建或重载面板来模拟浮动。
+`@tools-qweer/electron-dock` 是一个面向 Electron 的 Windows 原生停靠库。
+它让同一个持久 `WebContentsView` 在停靠区和真实 `BaseWindow` 浮窗之间迁移，
+不会为了模拟浮动而销毁、重建或重载业务页面。
 
-当前版本是 `0.2.0-alpha.3`。它用于尽早验证集成边界，不代表公共 API 已
-稳定，也不代表 Qt Dock 的完整交互已经通过人工验收。
+> **当前成熟度：Alpha / Technology Preview**
+>
+> `0.2.0-alpha.4` 已适合固定精确版本进行集成和反馈，但公共 API、跨版本迁移、
+> 键盘无障碍和多屏人工验收尚未冻结。它不是稳定版，也不是 Qt
+> `QDockWidget` 的完整跨平台替代。
 
-## 支持范围
+## 为什么使用它
 
-- Windows x64。
-- Node.js 22.12 或更高版本。
-- Electron 43（peer dependency 当前为 `^43.1.1`）。
-- ESM 主进程入口和纯 ESM 布局内核。
-- CommonJS preload 入口，便于直接用于 Electron 的 `preload` 路径。
+Electron 本身提供 `WebContentsView` 和原生窗口，却没有完整的 Dock 系统。
+许多 Web Dock 方案通过重建页面或把浮窗留在同一 HTML 布局中实现近似效果，
+这会丢失 WebGL、焦点、滚动位置和页面内状态。
 
-macOS、Linux X11、Wayland、Windows arm64 和 ia32 不在此 alpha 的支持
-范围内。
+Electron Dock 的边界是：
+
+- 每个业务面板只有一个长期存活的 `WebContentsView`。
+- 停靠与浮动只改变原生 View 的父级，`webContents.id` 保持不变。
+- 浮窗是真实 Windows 原生窗口，可以使用系统标题栏移动。
+- 库拥有布局树、Shell、Splitter、拖动预览和重挂载；应用继续拥有业务页面、
+  IPC 权限、菜单、账号状态和宿主窗口生命周期。
+- 可以挂入已有 `BrowserWindow`，不会重载宿主页、替换菜单或接管关闭策略。
+
+## 支持矩阵
+
+| 项目 | 当前支持 |
+|---|---|
+| 操作系统 | Windows x64 |
+| Electron | `^43.1.1` |
+| Node.js | `>=22.12` |
+| Main 入口 | ESM |
+| Core 入口 | 纯 ESM，不加载 Electron |
+| Panel preload | CommonJS |
+| macOS / Linux / Windows arm64 | 暂不支持 |
+
+## Alpha.4 已具备的能力
+
+- 挂入已有 `BrowserWindow`，或创建完整的独立 Dock 窗口。
+- 水平/垂直嵌套分割、中心标签合并、四边局部分割和工作区外沿停靠。
+- 停靠面板一次拖出为真实浮窗，浮窗再次拖回停靠区。
+- 同一标签组内拖动标签换位：4 DIP 曼哈顿阈值、实时顺序预览、
+  `Esc`/取消回滚、释放后持久化。
+- 标签切换、面板显隐、浮出/回停、Splitter 比例调整和布局重置。
+- 版本化布局持久化、原子文件替换、损坏/未知版本回退。
+- 结构化 Shell 外观 API，不需要访问私有 Shell 页面或注入 CSS。
+- 精确到 Shell/Panel `WebContents` 与 main frame 的 IPC 分权。
+- Windows 原生拖动 helper 的超时、异常退出、重启和清理。
+
+当前不包含：
+
+- 跨标签组拖动标签、标签撕出或动态注册/删除业务面板。
+- Dockview 等第三方布局框架适配层。
+- Qt `saveState()` 二进制格式兼容。
+- 完整键盘导航、屏幕阅读器语义和跨平台窗口后端。
 
 ## 安装
 
-从当前 GitHub Alpha 标签安装：
+当前公开渠道是不可变 GitHub Alpha 标签：
 
 ```powershell
-npm install 'github:tools-qweer/Electron-Dock#v0.2.0-alpha.3' electron@^43.1.1
+npm install "github:tools-qweer/Electron-Dock#v0.2.0-alpha.4" electron@^43.1.1
 ```
 
-发布到 npm 后也可使用：
+Alpha 阶段请固定精确标签或版本，不要依赖 `main` 或其他会移动的分支。
+
+npm 包名已经预留为 `@tools-qweer/electron-dock`，但首发 npm 发布尚未完成。
+在 npm 可用前，不要把下面的命令写入生产安装流程：
 
 ```powershell
+# npm 首发完成后才可使用
 npm install @tools-qweer/electron-dock@alpha electron@^43.1.1
 ```
 
-Alpha 阶段建议固定精确标签或版本，不要依赖会移动的分支。
+## 五分钟接入已有窗口
 
-## 挂入已有 BrowserWindow
-
-`attachWorkspace()` 是面向真实应用的接入入口。它只在消费者已有窗口的
-内容区内添加库拥有的 Shell、Overlay 和业务面板 `WebContentsView`，不会
-重载窗口自身页面、修改菜单、拦截关闭流程或销毁宿主窗口：
-
-```ts
-import { app, BrowserWindow } from "electron";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { createElectronDockRuntime } from "@tools-qweer/electron-dock";
-import {
-  createDockLayout,
-  createTabsNode,
-} from "@tools-qweer/electron-dock/core";
-
-await app.whenReady();
-
-const owner = new BrowserWindow({ width: 1280, height: 800 });
-await owner.loadURL("file:///your-existing-shell.html");
-
-const runtime = createElectronDockRuntime();
-const panelSenders = new Map<number, {
-  panelId: string;
-  role: "panel";
-  generation: number;
-}>();
-const workspace = await runtime.attachWorkspace({
-  id: "main-workspace",
-  window: owner,
-  bounds: { x: 220, y: 72, width: 1060, height: 728 },
-  panels: [{
-    id: "navigator",
-    title: "导航",
-    content: {
-      url: pathToFileURL(
-        path.join(import.meta.dirname, "renderer", "navigator.html"),
-      ).href,
-    },
-  }],
-  initialLayout: createDockLayout(
-    createTabsNode("tabs-main", ["navigator"]),
-  ),
-  layoutFilePath: path.join(app.getPath("userData"), "dock-layout.json"),
-  onPanelWebContentsCreated({ panelId, role, generation, webContents }) {
-    // 此回调发生在面板第一次 loadURL() 前，可安全登记 IPC sender。
-    panelSenders.set(webContents.id, { panelId, role, generation });
-  },
-  onPanelWebContentsDisposed({ webContentsId }) {
-    panelSenders.delete(webContentsId);
-  },
-});
-
-// 宿主布局变化时，以内容区坐标更新工作区。
-workspace.setBounds({ x: 240, y: 72, width: 1040, height: 728 });
-
-owner.once("closed", () => {
-  // 宿主仍拥有自己的关闭策略；库只回收它创建的资源。
-  void workspace.dispose();
-});
-```
-
-`attachWorkspace()` 返回的控制面包括 `setBounds`、`setVisible`、
-`setInteractionEnabled`、`snapshot`、`onDidChange`、`activatePanel`、
-`setPanelVisible`、`float`、`redock`、`reset`、`flush` 和 `dispose`。
-面板快照包含 `host`、`active`、`requestedVisible`、`visible` 和
-`webContentsId`。`requestedVisible` 是 `setPanelVisible()` 控制的稳定菜单
-偏好；`visible` 表示当前是否实际呈现，因此非活动标签的 `visible` 为 false，
-但 `requestedVisible` 仍为 true。业务
-preload 也可通过 `getPanelState()` / `onPanelStateChanged()` 读取同一状态。
-`setPanelVisible` 保留面板原布局位置，但当前 Alpha 不替宿主持久化窗口菜单
-偏好；应用可从 `snapshot` / `onDidChange` 维护自己的偏好状态。
-
-布局写入失败会由 `flush()`、`dispose()` 或拥有窗口的 `close()` 原样抛出，
-不会被成功结果掩盖。损坏、未知版本或缺失布局仍按兼容策略回退默认布局。
-
-## 创建独立 Dock 窗口
-
-主进程在 `app.whenReady()` 后显式创建运行时。导入包本身不会注册 IPC、
-监听 Electron 生命周期或创建窗口：
-
-```ts
-import { app } from "electron";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { createElectronDockRuntime } from "@tools-qweer/electron-dock";
-
-await app.whenReady();
-
-const runtime = createElectronDockRuntime();
-await runtime.createWindow({
-  id: "main",
-  panels: [
-    {
-      id: "navigator",
-      title: "导航",
-      content: {
-        url: pathToFileURL(
-          path.join(import.meta.dirname, "renderer", "navigator.html"),
-        ).href,
-      },
-    },
-    {
-      id: "editor",
-      title: "编辑器",
-      content: {
-        url: pathToFileURL(
-          path.join(import.meta.dirname, "renderer", "editor.html"),
-        ).href,
-      },
-    },
-  ],
-  initialLayout: {
-    version: 1,
-    nextNodeSequence: 2,
-    root: {
-      type: "split",
-      id: "split-1",
-      axis: "horizontal",
-      ratio: 0.25,
-      first: {
-        type: "tabs",
-        id: "tabs-1",
-        panelIds: ["navigator"],
-        activePanelId: "navigator",
-      },
-      second: {
-        type: "tabs",
-        id: "tabs-2",
-        panelIds: ["editor"],
-        activePanelId: "editor",
-      },
-    },
-    floating: [],
-  },
-  layoutFilePath: path.join(app.getPath("userData"), "dock-layout.json"),
-});
-
-app.on("window-all-closed", () => {
-  void runtime.dispose().finally(() => app.quit());
-});
-```
-
-面板 `url` 必须是完整 URL；加载本地页面时使用 `pathToFileURL(...).href`。
-库拥有 Dock Shell、布局树、持久 `WebContentsView` 和浮窗；业务页面、业务
-状态及业务 IPC 仍由宿主应用拥有。
-
-需要在业务页面中调用面板宿主 API 时，在宿主自己的 preload 中显式安装
-窄化 IPC API：
+### 1. 创建 Panel preload
 
 ```js
+// panel-preload.cjs
 const {
   exposeElectronDockPreloadApi,
 } = require("@tools-qweer/electron-dock/preload");
@@ -192,135 +88,332 @@ const {
 exposeElectronDockPreloadApi("electronDock");
 ```
 
-导入 preload 子路径本身没有全局副作用；只有显式调用安装函数才会写入
-`contextBridge`。公开 preload 只提供业务面板自身有效的
-`getPanelState`、`onPanelStateChanged`、兼容用
-`getHostState` / `onHostChanged`、`floatPanel`、`redockPanel` 和
-`readPanelSnapshot`。工作区隐藏或交互禁用时，面板自行发起的
-float/redock 会被主进程拒绝。工作区布局、标签切换、分割线调整和拖动预览
-由库内 Shell preload 独占，不会暴露给业务面板。
+公开 preload 只允许当前 Panel 读取自身状态，以及请求浮出/回停。布局树、
+标签换位、Splitter 和拖动预览仍属于库内 Shell 的私有权限。
 
-如果宿主应用启用 ASAR，需要把
-`node_modules/@tools-qweer/electron-dock/dist/native/**` 配置到
-electron-builder 的 `asarUnpack`，或在创建工作区时显式传入已解包的 helper
-路径。缺少可执行 helper 时，资源解析会直接报错，不会静默退化为近似拖动。
+### 2. 在 Main 中挂入工作区
 
-具体导出以对应入口的 TypeScript 声明为准。alpha 阶段请固定精确版本；在
-进入稳定版本前，入口导出、构造参数和持久化迁移策略都可能改变。
+```ts
+import { app, BrowserWindow } from "electron";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  createElectronDockRuntime,
+  type ElectronDockPanelWebContentsCreatedEvent,
+} from "@tools-qweer/electron-dock";
+import {
+  createDockLayout,
+  createTabsNode,
+} from "@tools-qweer/electron-dock/core";
 
-纯布局算法可从 `@tools-qweer/electron-dock/core` 导入，不会加载 Electron
-主进程模块。
+await app.whenReady();
 
-## 本仓库开发
+const owner = new BrowserWindow({
+  width: 1280,
+  height: 800,
+  webPreferences: {
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true,
+  },
+});
+await owner.loadFile(path.join(import.meta.dirname, "host.html"));
 
-```powershell
-cd 'E:\tools\Electron Dock'
-npm ci
-npm run typecheck
-npm test
-npm run build
-npm run package:check
-npm run package:consumer
-npm run pack:dry-run
+const runtime = createElectronDockRuntime();
+const authorizedPanels = new Map<number, string>();
+const panelPreload = path.join(
+  import.meta.dirname,
+  "panel-preload.cjs",
+);
+
+const workspace = await runtime.attachWorkspace({
+  id: "main-workspace",
+  window: owner,
+  // 宿主内容区坐标，不是屏幕坐标。
+  bounds: { x: 220, y: 48, width: 1060, height: 752 },
+  panels: [
+    {
+      id: "outline",
+      title: "组件层级",
+      minimumWidth: 180,
+      content: {
+        url: pathToFileURL(
+          path.join(import.meta.dirname, "outline.html"),
+        ).href,
+        preload: panelPreload,
+      },
+    },
+    {
+      id: "scene",
+      title: "场景",
+      minimumWidth: 420,
+      content: {
+        url: pathToFileURL(
+          path.join(import.meta.dirname, "scene.html"),
+        ).href,
+        preload: panelPreload,
+        backgroundThrottling: false,
+      },
+    },
+  ],
+  initialLayout: createDockLayout(
+    createTabsNode("tabs-main", ["outline", "scene"], "scene"),
+  ),
+  layoutFilePath: path.join(
+    app.getPath("userData"),
+    "dock-layout.json",
+  ),
+  onPanelWebContentsCreated(
+    event: ElectronDockPanelWebContentsCreatedEvent,
+  ) {
+    // 在首次 loadURL() 前同步发生，可在这里登记精确 IPC sender。
+    authorizedPanels.set(event.webContents.id, event.panelId);
+  },
+  onPanelWebContentsDisposed({ webContentsId }) {
+    authorizedPanels.delete(webContentsId);
+  },
+});
+
+owner.on("resize", () => {
+  const [width, height] = owner.getContentSize();
+  workspace.setBounds({
+    x: 220,
+    y: 48,
+    width: Math.max(1, width - 220),
+    height: Math.max(1, height - 48),
+  });
+});
+
+owner.once("closed", () => {
+  // 宿主仍拥有自己的关闭策略；库只回收它创建的资源。
+  void runtime.dispose();
+});
 ```
 
-运行内置演示和真实 Electron 重挂载 smoke：
+仓库内还有一个可直接运行的
+[`attachWorkspace` 示例](examples/attach-existing-window/README.md)。
+
+## Shell 外观
+
+不要扫描库内 Shell URL、访问私有 `WebContents` 或向 `.dock-*` 类注入 CSS。
+Alpha.4 提供结构化外观合同：
+
+```ts
+const workspace = await runtime.attachWorkspace({
+  // ...其他选项
+  shellAppearance: {
+    colors: {
+      colorScheme: "dark",
+      shellBackground: "#101111",
+      foreground: "#b8b8b8",
+      mutedForeground: "#7e8381",
+    },
+    font: {
+      family: '"Microsoft YaHei UI", "Segoe UI", sans-serif',
+      size: 13,
+      weight: 400,
+    },
+    titleBar: {
+      background: "#1a1a1a",
+      foreground: "#eeeeee",
+      borderWidth: 0,
+      bottomBorderColor: "#3a3d3c",
+      bottomBorderWidth: 1,
+      fontSize: 12,
+      fontWeight: 400,
+      lineHeight: 28,
+    },
+    tabBar: {
+      background: "#101111",
+      borderWidth: 0,
+      topBorderColor: "#3a3d3c",
+      topBorderWidth: 1,
+    },
+    tab: {
+      hoverBackground: "#292929",
+      activeBackground: "#15473e",
+      activeForeground: "#00ffcc",
+    },
+    splitter: {
+      background: "#101111",
+      hoverBackground: "#3a3d3c",
+    },
+  },
+});
+
+// 动态更新不会重建布局或业务 WebContents。
+workspace.setShellAppearance({
+  titleBar: { background: "#172331" },
+  tab: { activeForeground: "#42c8ff" },
+});
+
+// 恢复库默认外观。
+workspace.setShellAppearance(null);
+```
+
+输入会被规范化到固定 token 集；任意 CSS、选择器和脚本都不会进入 Shell。
+初始外观在 Shell 首次显示前应用，避免先闪过默认主题。
+需要在不加载 Electron 的 Node 工具或测试中预先规范化外观时，请从纯
+`@tools-qweer/electron-dock/core` 入口导入
+`normalizeElectronDockShellAppearance()` 和
+`DEFAULT_ELECTRON_DOCK_SHELL_APPEARANCE`。
+
+## 布局持久化
+
+最简单的方式是传入 `layoutFilePath`，库会使用临时文件、flush、close 和
+rename 完成原子替换。也可以提供应用自己的存储适配器：
+
+```ts
+import {
+  parseDockLayoutPersistence,
+  serializeDockLayoutPersistence,
+  type AtomicLayoutTextStorage,
+} from "@tools-qweer/electron-dock";
+
+const storage: AtomicLayoutTextStorage = {
+  async readText() {
+    return await configurationStore.read("dockLayout");
+  },
+  async writeTextAtomically(value) {
+    // 此方法必须由宿主保证原子提交。
+    await configurationStore.replaceAtomically("dockLayout", value);
+  },
+};
+
+// 在 attachWorkspace() 或 createWindow() 的选项中传入 storage；
+// 它优先于 layoutFilePath。
+const serialized = serializeDockLayoutPersistence(workspace.snapshot().layout);
+const parsed = parseDockLayoutPersistence(serialized);
+if (parsed !== null) {
+  console.log(parsed.layout);
+}
+```
+
+解析损坏 JSON、未知 schema 或未知版本时返回 `null`，不会抛出。布局写入错误
+会保留到 `flush()`、`dispose()` 或库拥有窗口的 `close()`，不会被成功结果
+掩盖。
+
+## 公开 API 速览
+
+### 包根入口
+
+- `createElectronDockRuntime()`；返回的 runtime 提供
+  `attachWorkspace()` / `createWindow()`
+- `ElectronDockWorkspace` / `ElectronDockWindow`
+- `ElectronDockShellAppearance`
+- `normalizeElectronDockShellAppearance()` /
+  `DEFAULT_ELECTRON_DOCK_SHELL_APPEARANCE`
+- `serializeDockLayoutPersistence()` / `parseDockLayoutPersistence()`
+- 布局、Panel、矩形和快照类型
+
+### `ElectronDockWorkspace`
+
+| 方法 | 用途 |
+|---|---|
+| `setBounds()` | 更新工作区在宿主内容区中的位置和大小 |
+| `setVisible()` | 隐藏/显示 Shell 与业务面板 |
+| `setInteractionEnabled()` | 暂停/恢复 Dock 写交互 |
+| `setShellAppearance()` | 动态替换结构化外观；`null` 恢复默认 |
+| `snapshot()` / `onDidChange()` | 读取或订阅布局、几何、Panel 与外观状态 |
+| `activatePanel()` | 激活指定 Panel |
+| `setPanelVisible()` | 设置稳定的用户显隐偏好 |
+| `float()` / `redock()` | 由宿主显式浮出或停靠 |
+| `reset()` | 恢复初始布局 |
+| `flush()` | 等待持久化队列并传播错误 |
+| `dispose()` | 回收库资源，不销毁消费者拥有的窗口 |
+
+Panel 快照中的 `requestedVisible` 是稳定偏好；`visible` 是当前实际呈现状态。
+因此非活动标签可能 `requestedVisible: true`、`visible: false`。
+
+### `@tools-qweer/electron-dock/core`
+
+纯算法入口，不加载 Electron 或 React。除布局构建、校验和迁移 API 外，还
+导出布局持久化编解码器与 Shell 外观规范化函数，适合 Node 工具和单元测试。
+
+### `@tools-qweer/electron-dock/preload`
+
+- `createElectronDockPreloadApi()`
+- `exposeElectronDockPreloadApi()`
+- `getPanelState()` / `onPanelStateChanged()`
+- `floatPanel()` / `redockPanel()`
+
+`floatPanel()` 与 `redockPanel()` 成功后返回稳定 Panel 状态；工作区不可见或
+交互被禁用时，Panel 发起的写请求会被 Main 拒绝。
+
+## 打包
+
+如果应用启用 ASAR，必须把 native helper 解包，例如：
+
+```yaml
+asarUnpack:
+  - node_modules/@tools-qweer/electron-dock/dist/native/**
+```
+
+也可以在运行时资源选项中显式传入已解包 helper 路径。缺少可执行 helper
+会直接报错，不会静默降级为近似拖动。
+
+包内回退 helper 固定为 Windows x64，并通过源码哈希、二进制哈希和 PE
+Machine `0x8664` 校验。目前尚未提供代码签名。
+
+## 安全模型
+
+- 导入包本身不会创建窗口、注册生命周期或暴露 preload API。
+- Main 是布局、重挂载和拖动状态的唯一权威。
+- Shell 与 Panel 使用不同 preload；业务 Panel 无法取得 Shell 写权限。
+- IPC 校验精确 `WebContents`、main frame、页面身份和交互状态。
+- `onPanelWebContentsCreated` 在首次导航前同步触发，便于消费者建立自己的
+  sender 白名单。
+- Shell 外观只接受规范化 token，不接受任意 CSS。
+
+安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要先创建公开 Issue。
+
+## 开发与验证
+
+```powershell
+git clone https://github.com/tools-qweer/Electron-Dock.git
+cd Electron-Dock
+npm ci
+npm run release:check
+```
+
+常用命令：
 
 ```powershell
 npm start
+npm test
+npm run typecheck
 npm run smoke:reparent
-npm run smoke:attach
+npm run package:consumer
 npm run package:consumer:electron
+npm run pack:dry-run
 ```
 
-Electron 43 的 npm 包不再通过普通安装生命周期自动下载桌面可执行文件。
-`npm start` 与 `smoke:reparent` 会先运行 `electron:ensure`：已安装时直接复用，
-缺失时调用 Electron 包自带的官方安装器。首次运行因此需要访问 Electron
-发行文件下载源。
+`package:consumer` 会真实 `npm pack`，把 tgz 安装到临时消费者中，再验证包根、
+`./core`、`./preload` 的类型和导入边界。Electron 消费 smoke 还验证挂入已有
+窗口、状态保持、sender 预登记、外观更新、浮出/回停和独立回收。
 
-`package:consumer` 会真实执行 `npm pack`，把 tgz 安装到系统临时目录中的
-最小 TypeScript/Electron fixture，再验证根入口、`./core`、`./preload`
-的 NodeNext 类型和导入解析，以及发布包内 native helper、renderer 和内部
-preload；结束后始终清理临时目录。CI 运行这一无 GUI 门禁。
-`package:consumer:electron`（也即 `smoke:attach`）额外下载/启用 Electron
-二进制，从已安装 tgz 挂入消费者已有的 `show:false` 窗口，验证宿主页
-WebContents、页面状态、菜单和关闭监听均未改变；随后覆盖 bounds、交互
-开关、显隐、浮出/停靠、WebContents ID 保持、面板 sender 预登记和独立
-dispose，最后再验证 `createWindow()` 兼容路径。该真实桌面 smoke 由
-Windows CI 和本地门禁执行。
+自动检查能证明状态、几何、IPC、持久化和资源不变量，但不能替代真实拖动手感、
+混合 DPI、多屏与长时间操作的人工验收。
 
-`npm run build` 同时生成发布入口的 JavaScript/TypeScript 声明，以及现有
-演示所需的 `dist/demo/index.js`、内部 preload、renderer 和 Windows 原生
-拖动 helper。有系统 `.NET Framework` `csc.exe` 时，helper 会从
-`native/windows-drag-helper.cs` 重新编译；精简 Windows 环境没有该编译器时，
-构建会先校验仓库内 Windows x64 预编译 helper 与源码哈希清单，再复制到
-`dist/native/`。因此从 GitHub 标签安装不要求目标机器必须存在 `csc.exe`。
-编译固定使用 `/platform:x64`；单元测试、包合同检查和 tgz 消费者都会解析
-PE header，要求 Machine 为 AMD64 `0x8664`，不接受 AnyCPU/I386 helper。
-`npm run package:check` 验证发布元数据、导出目标和关键产物；`prepack`
-会重新执行构建和包合同检查。
+贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，维护者发布流程见
+[docs/RELEASING.md](docs/RELEASING.md)。
 
-修改 C# helper 源码后，需要在具备 `csc.exe` 的 Windows x64 环境运行：
+## 当前 Alpha 限制与稳定版门槛
 
-```powershell
-npm run native:refresh-fallback
-```
+以下工作完成前不会宣称稳定：
 
-该命令会原子更新 `native/bin/windows-drag-helper.exe` 及其 manifest；源码、
-预编译二进制和哈希清单应在同一次提交中更新。
+- 100% / 125% / 150% / 200% 混合 DPI、多屏与热插拔人工验证。
+- 连续 100 次浮出/停靠的手感、响应和资源稳定性人工验证。
+- 公共 API 与跨版本迁移策略冻结。
+- 完整焦点遍历、键盘操作和屏幕阅读器语义。
+- native helper 签名与更广平台支持。
 
-## 当前架构
+更详细的证据边界、兼容合同和人工步骤见：
 
-- `src/core`：与 Electron、React 无关的布局树、几何和状态变换。
-- `src/main`：主进程布局状态、`BaseWindow`、持久
-  `WebContentsView`、原生拖动协调和原子布局存储。
-- `src/preload`：业务面板使用收窄的公开 IPC；库内 Shell preload 独占布局、
-  resize 和 drag 权限。
-- `src/renderer`：演示用 Shell、Panel 和拖动 Overlay。
-- `native/windows-drag-helper.cs`：Windows 系统移动/坐标桥；构建时使用
-  Windows 自带 C# 编译器生成 helper。
-- `native/bin/windows-drag-helper.exe`：GitHub 标签安装缺少 `csc.exe` 时使用
-  的仓库内 Windows x64 回退；同目录 manifest 将它绑定到对应 C# 源码。
-
-每个工作区拥有独立 Shell `WebContentsView`，每个业务面板也拥有独立
-`WebContentsView`。停靠和浮动只改变面板 View 的原生父级，不销毁其
-`webContents`。布局保存使用临时文件、flush、close 和 rename 原子替换；
-写入错误向宿主传播，损坏或未知版本会回退默认布局。
-
-## 已自动验证
-
-- 布局树、中心标签合并、局部分割、根级停靠和最小尺寸不变量。
-- 预览与提交共用同一个候选布局，浮窗客户区尺寸在允许时保持。
-- 同一个 `WebContentsView` 完成“停靠 → 浮动 → 停靠”，页面状态与
-  WebContents ID 不变。
-- 独立 Electron 进程间的布局保存、恢复和损坏回退。
-- 简单往返后没有残留 `BaseWindow`，主进程关闭会回收拖动 helper。
-- 拖动 helper 阻塞、退出或写入失败时会隔离旧进程并可在下一次拖动时重启；
-  失焦、隐藏、最小化和超时路径会恢复浮窗交互状态。
-- 真实 tgz 消费者可挂入现有 `BrowserWindow`；挂入和独立回收均不改变宿主
-  WebContents、页面状态、菜单、关闭监听或窗口生命期。
-- 面板首屏脚本可在 `attachWorkspace()` 完成前读取非空的公开面板状态；
-  初始化期不会提前开放 float/redock 等写权限，失败或销毁后临时授权会撤销。
-
-自动检查验证状态、几何、IPC、持久化和资源不变量，但不等于人工体验验收。
-
-## Alpha 限制
-
-- 公共 API、版本升级策略、框架适配层、可访问性和焦点遍历尚未稳定。
-- `0.2.x` 已支持挂入已有 `BrowserWindow`，但宿主必须在自身布局变化时
-  调用 `setBounds()`；尚无 Dockview 等第三方布局框架的兼容适配层。
-- 真实鼠标锚点、浮出/贴边手感和视觉贴合仍需人工确认。
-- 混合 DPI（100%/125%/150%/200%）、跨屏拖动和显示器热插拔尚未完成
-  发布级人工验收。
-- 连续 100 次拖出/停靠的响应、抖动和资源稳定性尚未完成发布级人工验收。
-- native helper 与仓库内回退二进制仅面向 Windows x64；有 `csc.exe` 时优先
-  从源码构建，缺少时使用经过源码/二进制双哈希校验的预编译回退。
-- 这不是 `QMainWindow` / `QDockWidget` 的跨平台替代，也不兼容 Qt 的
-  二进制 `saveState()` 格式。
-
-更完整的证据边界与待验收步骤见
-[`docs/FEASIBILITY_STATUS.md`](docs/FEASIBILITY_STATUS.md) 和
-[`docs/COMPATIBILITY_CONTRACT.md`](docs/COMPATIBILITY_CONTRACT.md)。
+- [可行性状态](docs/FEASIBILITY_STATUS.md)
+- [Windows 行为兼容合同](docs/COMPATIBILITY_CONTRACT.md)
+- [发布流程](docs/RELEASING.md)
+- [更新记录](CHANGELOG.md)
 
 ## License
 

@@ -1,0 +1,19 @@
+{
+  "name": "electron-dock-attach-existing-window-example",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Minimal Electron Dock attachWorkspace example.",
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "build:preload": "esbuild preload.cjs --bundle --platform=node --format=cjs --external:electron --outfile=.generated/panel-preload.cjs",
+    "start": "npm run build:preload && electron ."
+  },
+  "dependencies": {
+    "@tools-qweer/electron-dock": "file:../.."
+  },
+  "devDependencies": {
+    "electron": "43.1.1",
+    "esbuild": "0.28.1"
+  }
+}

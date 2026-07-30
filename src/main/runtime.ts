@@ -17,6 +17,7 @@ import {
   IPC,
   isBeginPanelDragMessage,
   isRectangle,
+  isReorderTabMessage,
   isSetActivePanelMessage,
   isSetSplitRatioMessage,
 } from "../shared/protocol.js";
@@ -110,6 +111,19 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     entry.workspace.activatePanel(value.tabsNodeId, value.panelId);
   };
 
+  readonly #handleReorderTab = (
+    event: IpcMainEvent,
+    value: unknown,
+  ): void => {
+    const entry = this.#shellEntry(event);
+    if (entry === null || !isReorderTabMessage(value)) return;
+    entry.workspace.reorderTab(
+      value.tabsNodeId,
+      value.panelId,
+      value.targetIndex,
+    );
+  };
+
   readonly #handleSetSplitRatio = (
     event: IpcMainEvent,
     value: unknown,
@@ -184,6 +198,7 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     this.#onDisposed = onDisposed;
     ipcMain.handle(IPC.getWorkspaceState, this.#handleGetWorkspaceState);
     ipcMain.on(IPC.setActivePanel, this.#handleSetActivePanel);
+    ipcMain.on(IPC.reorderTab, this.#handleReorderTab);
     ipcMain.on(IPC.setSplitRatio, this.#handleSetSplitRatio);
     ipcMain.handle(IPC.floatPanel, this.#handleFloatPanel);
     ipcMain.handle(IPC.redockPanel, this.#handleRedockPanel);
@@ -292,6 +307,7 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     } finally {
       ipcMain.removeHandler(IPC.getWorkspaceState);
       ipcMain.off(IPC.setActivePanel, this.#handleSetActivePanel);
+      ipcMain.off(IPC.reorderTab, this.#handleReorderTab);
       ipcMain.off(IPC.setSplitRatio, this.#handleSetSplitRatio);
       ipcMain.removeHandler(IPC.floatPanel);
       ipcMain.removeHandler(IPC.redockPanel);

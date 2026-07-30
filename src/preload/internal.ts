@@ -7,6 +7,7 @@ import {
   IPC,
   type BeginPanelDragMessage,
   type DragPreviewMessage,
+  type ReorderTabMessage,
   type SetActivePanelMessage,
   type SetSplitRatioMessage,
   type WorkspaceStateMessage,
@@ -20,11 +21,13 @@ import {
  */
 export interface ElectronDockInternalPreloadApi
   extends ElectronDockPreloadApi {
+  readPanelSnapshot(): Promise<unknown>;
   getWorkspaceState(): Promise<WorkspaceStateMessage | null>;
   onWorkspaceState(
     listener: (message: WorkspaceStateMessage) => void,
   ): () => void;
   setActivePanel(message: SetActivePanelMessage): void;
+  reorderTab(message: ReorderTabMessage): void;
   setSplitRatio(message: SetSplitRatioMessage): void;
   beginPanelDrag(message: BeginPanelDragMessage): void;
   onDragPreview(listener: (message: DragPreviewMessage) => void): () => void;
@@ -34,6 +37,9 @@ export function createElectronDockInternalPreloadApi():
   ElectronDockInternalPreloadApi {
   return {
     ...createElectronDockPreloadApi(),
+    readPanelSnapshot(): Promise<unknown> {
+      return ipcRenderer.invoke(IPC.panelSnapshot);
+    },
     getWorkspaceState(): Promise<WorkspaceStateMessage | null> {
       return ipcRenderer.invoke(IPC.getWorkspaceState);
     },
@@ -44,6 +50,9 @@ export function createElectronDockInternalPreloadApi():
     },
     setActivePanel(message: SetActivePanelMessage): void {
       ipcRenderer.send(IPC.setActivePanel, message);
+    },
+    reorderTab(message: ReorderTabMessage): void {
+      ipcRenderer.send(IPC.reorderTab, message);
     },
     setSplitRatio(message: SetSplitRatioMessage): void {
       ipcRenderer.send(IPC.setSplitRatio, message);

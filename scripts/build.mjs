@@ -8,6 +8,8 @@ const root = path.resolve(import.meta.dirname, "..");
 const dist = path.join(root, "dist");
 const publicPreloadEntry = path.join(root, "src/preload/public.ts");
 const internalPreloadEntry = path.join(root, "src/preload/index.ts");
+const rendererBuildMarker =
+  "/* electron-dock-renderer-build: production,minified */";
 
 await Promise.all([
   rm(path.join(dist, "demo"), { recursive: true, force: true }),
@@ -97,6 +99,14 @@ await build({
   platform: "browser",
   format: "iife",
   target: "chrome142",
+  define: {
+    "process.env.NODE_ENV": JSON.stringify("production"),
+  },
+  minify: true,
+  legalComments: "none",
+  banner: {
+    js: rendererBuildMarker,
+  },
   sourcemap: true,
 });
 

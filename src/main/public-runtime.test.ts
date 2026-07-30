@@ -16,6 +16,7 @@ interface BrowserWindowDouble {
 
 interface WorkspaceDouble {
   disposed: boolean;
+  readonly shellWebContentsId: number;
   readonly panelWebContents: {
     readonly id: number;
     readonly mainFrame: object;
@@ -23,9 +24,16 @@ interface WorkspaceDouble {
   bounds: Rectangle;
   visible: boolean;
   interactionEnabled: boolean;
+  shellAppearance: unknown;
+  shellAppearanceCalls: unknown[];
   flushPersistence(): Promise<void>;
   floatCalls: number;
   redockCalls: number;
+  reorderCalls: Array<{
+    readonly tabsNodeId: string;
+    readonly panelId: string;
+    readonly targetIndex: number;
+  }>;
 }
 
 interface DragControllerDouble {
@@ -204,13 +212,22 @@ vi.mock("./dock-workspace-host.js", () => {
     bounds: Rectangle;
     visible: boolean;
     interactionEnabled: boolean;
+    shellAppearance: unknown;
+    shellAppearanceCalls: unknown[] = [];
+    host: "docked" | "floating" = "docked";
     floatCalls = 0;
     redockCalls = 0;
+    reorderCalls: Array<{
+      readonly tabsNodeId: string;
+      readonly panelId: string;
+      readonly targetIndex: number;
+    }> = [];
 
     constructor(readonly options: any) {
       this.bounds = options.shellView.bounds;
       this.visible = options.shellView.visible;
       this.interactionEnabled = options.shellView.interactionEnabled;
+      this.shellAppearance = options.shellAppearance ?? null;
       testState.workspaces.push(this);
     }
 
@@ -224,13 +241,14 @@ vi.mock("./dock-workspace-host.js", () => {
         layout: this.layout,
         geometry: this.geometry,
         interactionEnabled: this.interactionEnabled,
+        shellAppearance: this.shellAppearance,
       };
     }
 
     panelStates() {
       return [{
         panelId: "panel",
-        host: "docked",
+        host: this.host,
         active: true,
         requestedVisible: true,
         visible: this.visible,
@@ -260,6 +278,12 @@ vi.mock("./dock-workspace-host.js", () => {
       this.#emit();
     }
 
+    setShellAppearance(appearance: unknown): void {
+      this.shellAppearance = appearance;
+      this.shellAppearanceCalls.push(appearance);
+      this.#emit();
+    }
+
     setPanelVisible(): void {
       this.#emit();
     }
@@ -268,14 +292,25 @@ vi.mock("./dock-workspace-host.js", () => {
       this.#emit();
     }
 
+    reorderTab(
+      tabsNodeId: string,
+      panelId: string,
+      targetIndex: number,
+    ): void {
+      this.reorderCalls.push({ tabsNodeId, panelId, targetIndex });
+      this.#emit();
+    }
+
     floatPanel(): { snapshot(): object } {
       this.floatCalls += 1;
+      this.host = "floating";
       this.#emit();
       return { snapshot: () => ({}) };
     }
 
     redockPanel(): void {
       this.redockCalls += 1;
+      this.host = "docked";
       this.#emit();
     }
 
@@ -293,7 +328,7 @@ vi.mock("./dock-workspace-host.js", () => {
           panelId,
           snapshot: () => ({
             panelId,
-            host: "docked",
+            host: this.host,
             webContentsId: 500,
           }),
           readRendererSnapshot: async () => null,
@@ -366,6 +401,10 @@ import {
   type ElectronDockRuntime,
 } from "./public-runtime.js";
 import { IPC } from "../shared/protocol.js";
+import {
+  DEFAULT_ELECTRON_DOCK_SHELL_APPEARANCE,
+  normalizeElectronDockShellAppearance,
+} from "../shared/shell-appearance.js";
 
 let runtime: ElectronDockRuntime | null = null;
 
@@ -577,6 +616,45 @@ describe("ElectronDockRuntime attachWorkspace", () => {
     expect(testState.dragControllers[0]?.disposed).toBe(true);
   });
 
+  it("delegates initial and dynamic shell appearance without replacing layout or WebContents", async () => {
+    const owner = new BrowserWindow() as unknown as BrowserWindowDouble;
+    const initialAppearance = normalizeElectronDockShellAppearance({
+      colors: { shellBackground: "#151515" },
+      titleBar: { background: "#202020", borderWidth: 0 },
+    });
+    const workspace = await runtime!.attachWorkspace({
+      ...baseOptions("appearance"),
+      window: owner as unknown as BrowserWindow,
+      bounds: { x: 0, y: 0, width: 500, height: 400 },
+      shellAppearance: initialAppearance,
+    });
+    const state = testState.workspaces[0]!;
+    const initialSnapshot = workspace.snapshot();
+    const panelWebContentsId = initialSnapshot.panels[0]?.webContentsId;
+    const layoutIdentity = initialSnapshot.layout;
+
+    expect(state.shellAppearance).toEqual(initialAppearance);
+    expect(initialSnapshot.shellAppearance).toEqual(initialAppearance);
+
+    workspace.setShellAppearance({
+      tab: { activeForeground: "#abcdef" },
+    });
+    expect(state.shellAppearanceCalls).toEqual([
+      { tab: { activeForeground: "#abcdef" } },
+    ]);
+    expect(workspace.snapshot().layout).toBe(layoutIdentity);
+    expect(workspace.snapshot().panels[0]?.webContentsId).toBe(
+      panelWebContentsId,
+    );
+
+    workspace.setShellAppearance(null);
+    expect(state.shellAppearanceCalls.at(-1)).toBeNull();
+    // The real DockWorkspaceHost performs normalization. The public wrapper
+    // never scans or exposes the private shell WebContents.
+    expect(DEFAULT_ELECTRON_DOCK_SHELL_APPEARANCE.colors.shellBackground)
+      .toBe("#101313");
+  });
+
   it("surfaces persistence failures while still cleaning attached resources", async () => {
     const owner = new BrowserWindow() as unknown as BrowserWindowDouble;
     const workspace = await runtime!.attachWorkspace({
@@ -624,6 +702,86 @@ describe("ElectronDockRuntime attachWorkspace", () => {
     workspace.setVisible(false);
     expect(invokeRedock(event)).toBeNull();
     expect(state.redockCalls).toBe(0);
+  });
+
+  it("returns the stable public panel state after float and redock", async () => {
+    const owner = new BrowserWindow() as unknown as BrowserWindowDouble;
+    await runtime!.attachWorkspace({
+      ...baseOptions("panel-state-results"),
+      window: owner as unknown as BrowserWindow,
+      bounds: { x: 0, y: 0, width: 500, height: 400 },
+    });
+    const state = testState.workspaces[0]!;
+    const senderFrame = state.panelWebContents.mainFrame;
+    const event = {
+      sender: state.panelWebContents,
+      senderFrame,
+    };
+    const invokeFloat = testState.ipcHandlers.get(IPC.floatPanel) as (
+      event: unknown,
+      value?: unknown,
+    ) => unknown;
+    const invokeRedock = testState.ipcHandlers.get(IPC.redockPanel) as (
+      event: unknown,
+    ) => unknown;
+
+    expect(invokeFloat(event)).toEqual({
+      panelId: "panel",
+      host: "floating",
+      active: true,
+      requestedVisible: true,
+      visible: true,
+      webContentsId: 500,
+    });
+    expect(invokeRedock(event)).toEqual({
+      panelId: "panel",
+      host: "docked",
+      active: true,
+      requestedVisible: true,
+      visible: true,
+      webContentsId: 500,
+    });
+  });
+
+  it("accepts tab reorder only from the enabled workspace shell main frame", async () => {
+    const owner = new BrowserWindow() as unknown as BrowserWindowDouble;
+    const workspace = await runtime!.attachWorkspace({
+      ...baseOptions("tab-reorder"),
+      window: owner as unknown as BrowserWindow,
+      bounds: { x: 0, y: 0, width: 500, height: 400 },
+    });
+    const state = testState.workspaces[0]!;
+    const senderFrame = {};
+    const event = {
+      sender: { id: state.shellWebContentsId, mainFrame: senderFrame },
+      senderFrame,
+    };
+    const forgedFrameEvent = {
+      sender: { id: state.shellWebContentsId, mainFrame: senderFrame },
+      senderFrame: {},
+    };
+    const listener = [
+      ...(testState.ipcListeners.get(IPC.reorderTab) ?? []),
+    ][0];
+    if (typeof listener !== "function") {
+      throw new Error("Expected the tab reorder IPC listener");
+    }
+    const message = {
+      tabsNodeId: "tabs-scenes",
+      panelId: "map",
+      targetIndex: 0,
+    };
+
+    listener(forgedFrameEvent, message);
+    listener(event, { ...message, targetIndex: -1 });
+    expect(state.reorderCalls).toEqual([]);
+
+    listener(event, message);
+    expect(state.reorderCalls).toEqual([message]);
+
+    workspace.setInteractionEnabled(false);
+    listener(event, { ...message, targetIndex: 1 });
+    expect(state.reorderCalls).toEqual([message]);
   });
 });
 

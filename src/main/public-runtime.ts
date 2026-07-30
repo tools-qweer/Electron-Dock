@@ -19,11 +19,18 @@ import {
   IPC,
   isBeginPanelDragMessage,
   isRectangle,
+  isReorderTabMessage,
   isSetActivePanelMessage,
   isSetSplitRatioMessage,
   type DockHostKind,
+  type PanelStateMessage,
 } from "../shared/protocol.js";
 import type { DockPanelContentOptions } from "./dock-host.js";
+import {
+  normalizeElectronDockShellAppearance,
+  type ElectronDockShellAppearance,
+  type NormalizedElectronDockShellAppearance,
+} from "../shared/shell-appearance.js";
 import {
   DockWorkspaceHost,
   type DockWorkspacePanelState,
@@ -50,6 +57,11 @@ interface ElectronDockWorkspaceConfiguration
   readonly initialLayout: DockLayoutState;
   readonly layoutFilePath?: string;
   readonly storage?: AtomicLayoutTextStorage;
+  /**
+   * Structured visual tokens for the private library-owned shell.
+   * Omit (or later pass null to setShellAppearance) for library defaults.
+   */
+  readonly shellAppearance?: ElectronDockShellAppearance | null;
   /**
    * Runs synchronously after a panel WebContents is created and before its
    * first loadURL(), allowing the host to register sender authority safely.
@@ -122,6 +134,7 @@ export interface ElectronDockWorkspaceSnapshot {
   readonly bounds: Rectangle;
   readonly visible: boolean;
   readonly interactionEnabled: boolean;
+  readonly shellAppearance: NormalizedElectronDockShellAppearance;
   readonly layout: DockLayoutState;
   readonly geometry: DockLayoutGeometry;
   readonly panels: readonly ElectronDockPanelState[];
@@ -137,6 +150,7 @@ export interface ElectronDockWorkspace {
   setBounds(bounds: Rectangle): void;
   setVisible(visible: boolean): void;
   setInteractionEnabled(enabled: boolean): void;
+  setShellAppearance(appearance: ElectronDockShellAppearance | null): void;
   snapshot(): ElectronDockWorkspaceSnapshot;
   onDidChange(listener: ElectronDockWorkspaceChangeListener): () => void;
   activatePanel(panelId: string): void;
@@ -217,6 +231,25 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     entry.workspace.activatePanel(value.tabsNodeId, value.panelId);
   };
 
+  readonly #handleReorderTab = (
+    event: IpcMainEvent,
+    value: unknown,
+  ): void => {
+    const entry = this.#shellEntry(event);
+    if (
+      entry === null
+      || !entry.workspace.interactionEnabled
+      || !isReorderTabMessage(value)
+    ) {
+      return;
+    }
+    entry.workspace.reorderTab(
+      value.tabsNodeId,
+      value.panelId,
+      value.targetIndex,
+    );
+  };
+
   readonly #handleSetSplitRatio = (
     event: IpcMainEvent,
     value: unknown,
@@ -235,7 +268,7 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
   readonly #handleFloatPanel = (
     event: IpcMainInvokeEvent,
     value: unknown,
-  ): unknown => {
+  ): PanelStateMessage | null => {
     const located = this.#panelEntry(event);
     if (
       located === null
@@ -246,12 +279,16 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
       return null;
     }
     const bounds = isRectangle(value) ? value : undefined;
-    return located.entry.workspace
-      .floatPanel(located.panelId, bounds)
-      ?.snapshot() ?? null;
+    located.entry.workspace.floatPanel(located.panelId, bounds);
+    return panelStateMessage(
+      located.entry.workspace,
+      located.panelId,
+    );
   };
 
-  readonly #handleRedockPanel = (event: IpcMainInvokeEvent): unknown => {
+  readonly #handleRedockPanel = (
+    event: IpcMainInvokeEvent,
+  ): PanelStateMessage | null => {
     const located = this.#panelEntry(event);
     if (
       located === null
@@ -262,8 +299,10 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
       return null;
     }
     located.entry.workspace.redockPanel(located.panelId);
-    return located.entry.workspace.hostByPanelId(located.panelId)?.snapshot()
-      ?? null;
+    return panelStateMessage(
+      located.entry.workspace,
+      located.panelId,
+    );
   };
 
   readonly #handlePanelSnapshot = async (
@@ -322,6 +361,7 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     this.#onDisposed = onDisposed;
     ipcMain.handle(IPC.getWorkspaceState, this.#handleGetWorkspaceState);
     ipcMain.on(IPC.setActivePanel, this.#handleSetActivePanel);
+    ipcMain.on(IPC.reorderTab, this.#handleReorderTab);
     ipcMain.on(IPC.setSplitRatio, this.#handleSetSplitRatio);
     ipcMain.handle(IPC.floatPanel, this.#handleFloatPanel);
     ipcMain.handle(IPC.redockPanel, this.#handleRedockPanel);
@@ -411,6 +451,9 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     options: ElectronDockWindowOptions,
   ): Promise<ElectronDockWindowImpl> {
     const requestedPreferences = options.windowOptions?.webPreferences ?? {};
+    const shellAppearance = normalizeElectronDockShellAppearance(
+      options.shellAppearance,
+    );
     const desiredShow = options.show
       ?? options.windowOptions?.show
       ?? true;
@@ -420,7 +463,7 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
       height: 820,
       minWidth: 640,
       minHeight: 420,
-      backgroundColor: "#101313",
+      backgroundColor: shellAppearance.colors.shellBackground,
       autoHideMenuBar: true,
       ...options.windowOptions,
       show: false,
@@ -593,6 +636,7 @@ class ElectronDockRuntimeImpl implements ElectronDockRuntime {
     } finally {
       ipcMain.removeHandler(IPC.getWorkspaceState);
       ipcMain.off(IPC.setActivePanel, this.#handleSetActivePanel);
+      ipcMain.off(IPC.reorderTab, this.#handleReorderTab);
       ipcMain.off(IPC.setSplitRatio, this.#handleSetSplitRatio);
       ipcMain.removeHandler(IPC.floatPanel);
       ipcMain.removeHandler(IPC.redockPanel);
@@ -734,6 +778,11 @@ class ElectronDockWorkspaceImpl implements ElectronDockWorkspace {
         visible: options.visible ?? true,
         interactionEnabled: options.interactionEnabled ?? true,
       },
+      ...(
+        options.shellAppearance === undefined
+          ? {}
+          : { shellAppearance: options.shellAppearance }
+      ),
       onPanelWebContentsCreated: (
         panelId: string,
         webContents: WebContents,
@@ -819,6 +868,13 @@ class ElectronDockWorkspaceImpl implements ElectronDockWorkspace {
     this.workspace.setInteractionEnabled(enabled);
   }
 
+  setShellAppearance(
+    appearance: ElectronDockShellAppearance | null,
+  ): void {
+    this.#assertActive();
+    this.workspace.setShellAppearance(appearance);
+  }
+
   snapshot(): ElectronDockWorkspaceSnapshot {
     const state = this.workspace.snapshot();
     return {
@@ -826,6 +882,8 @@ class ElectronDockWorkspaceImpl implements ElectronDockWorkspace {
       bounds: this.workspace.bounds,
       visible: this.workspace.visible,
       interactionEnabled: this.workspace.interactionEnabled,
+      shellAppearance: state.shellAppearance
+        ?? normalizeElectronDockShellAppearance(),
       layout: state.layout,
       geometry: state.geometry,
       panels: this.workspace.panelStates().map(publicPanelState),
@@ -984,6 +1042,12 @@ class ElectronDockWindowImpl implements ElectronDockWindow {
     this.#workspace.setInteractionEnabled(enabled);
   }
 
+  setShellAppearance(
+    appearance: ElectronDockShellAppearance | null,
+  ): void {
+    this.#workspace.setShellAppearance(appearance);
+  }
+
   snapshot(): ElectronDockWorkspaceSnapshot {
     return this.#workspace.snapshot();
   }
@@ -1070,6 +1134,16 @@ function publicPanelState(
     visible: state.visible,
     webContentsId: state.webContentsId,
   };
+}
+
+function panelStateMessage(
+  workspace: DockWorkspaceHost,
+  panelId: string,
+): PanelStateMessage | null {
+  const state = workspace.panelStates().find(
+    (candidate) => candidate.panelId === panelId,
+  );
+  return state === undefined ? null : publicPanelState(state);
 }
 
 function panelIsVisible(
