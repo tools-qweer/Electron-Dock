@@ -445,14 +445,51 @@ async function runTabReorderPointerSmoke(
         ?.dataset.panelId ?? null,
       active: document.querySelector(".dock-tab--active")
         ?.dataset.panelId ?? null,
+      animationCount: Array.from(document.querySelectorAll(".dock-tab"))
+        .reduce((count, element) => count + element.getAnimations()
+          .filter((animation) => animation.playState === "running").length, 0),
+      cursor: getComputedStyle(document.querySelector(".dock-tab")).cursor,
     });
   `);
+  const readTabCenter = async (
+    panelId: string,
+  ): Promise<{ readonly x: number; readonly y: number } | null> => {
+    const serializedPanelId = JSON.stringify(panelId);
+    const value = await shell.executeJavaScript(`
+      (() => {
+        const element = Array.from(document.querySelectorAll(".dock-tab"))
+          .find((candidate) => candidate.dataset.panelId === ${serializedPanelId});
+        if (!element) return null;
+        const bounds = element.getBoundingClientRect();
+        return {
+          x: Math.round(bounds.left + bounds.width / 2),
+          y: Math.round(bounds.top + bounds.height / 2),
+        };
+      })();
+    `) as unknown;
+    if (
+      typeof value !== "object"
+      || value === null
+      || typeof Reflect.get(value, "x") !== "number"
+      || typeof Reflect.get(value, "y") !== "number"
+    ) {
+      return null;
+    }
+    return {
+      x: Reflect.get(value, "x") as number,
+      y: Reflect.get(value, "y") as number,
+    };
+  };
   shell.focus();
   const debuggerWasAttached = shell.debugger.isAttached();
   if (!debuggerWasAttached) shell.debugger.attach("1.3");
   let pointerDownState: unknown;
   let pointerMoveState: unknown;
   let pointerUpState: unknown;
+  let storyClickState: unknown;
+  let mapClickState: unknown;
+  let storyClickActivated = false;
+  let mapClickActivated = false;
   try {
     await shell.debugger.sendCommand("Input.dispatchMouseEvent", {
       type: "mousePressed",
@@ -480,15 +517,70 @@ async function runTabReorderPointerSmoke(
     });
     await delay(120);
     pointerUpState = await readDomState();
+    const storyCenter = await readTabCenter("story-scene");
+    if (storyCenter !== null) {
+      await shell.debugger.sendCommand("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        ...storyCenter,
+        button: "left",
+        buttons: 1,
+        clickCount: 1,
+      });
+      await shell.debugger.sendCommand("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        ...storyCenter,
+        button: "left",
+        buttons: 0,
+        clickCount: 1,
+      });
+      await delay(80);
+      storyClickState = await readDomState();
+      storyClickActivated = findTabsNode(
+        dockWorkspace.layout.root,
+        "tabs-scenes",
+      )?.activePanelId === "story-scene";
+    }
+    const mapCenter = await readTabCenter("map-scene");
+    if (mapCenter !== null) {
+      await shell.debugger.sendCommand("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        ...mapCenter,
+        button: "left",
+        buttons: 1,
+        clickCount: 1,
+      });
+      await shell.debugger.sendCommand("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        ...mapCenter,
+        button: "left",
+        buttons: 0,
+        clickCount: 1,
+      });
+      await delay(80);
+      mapClickState = await readDomState();
+      mapClickActivated = findTabsNode(
+        dockWorkspace.layout.root,
+        "tabs-scenes",
+      )?.activePanelId === "map-scene";
+    }
   } finally {
     if (!debuggerWasAttached && shell.debugger.isAttached()) {
       shell.debugger.detach();
     }
   }
   const tabs = findTabsNode(dockWorkspace.layout.root, "tabs-scenes");
+  const moveEvidence = pointerMoveState as {
+    readonly animationCount?: unknown;
+    readonly cursor?: unknown;
+  };
   const passed = tabs?.activePanelId === "map-scene"
     && tabs.panelIds[0] === "map-scene"
-    && tabs.panelIds[1] === "story-scene";
+    && tabs.panelIds[1] === "story-scene"
+    && storyClickActivated
+    && mapClickActivated
+    && typeof moveEvidence.animationCount === "number"
+    && moveEvidence.animationCount > 0
+    && moveEvidence.cursor === "default";
   if (!passed) {
     process.stderr.write(`TAB_REORDER_SMOKE_DIAGNOSTIC ${JSON.stringify({
       entries,
@@ -497,6 +589,10 @@ async function runTabReorderPointerSmoke(
       pointerDownState,
       pointerMoveState,
       pointerUpState,
+      storyClickState,
+      mapClickState,
+      storyClickActivated,
+      mapClickActivated,
       layout: tabs,
     })}\n`);
   }

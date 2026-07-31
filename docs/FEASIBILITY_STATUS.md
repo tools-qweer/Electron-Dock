@@ -89,6 +89,10 @@
   持久化换位；增加结构化 Shell 外观与动态更新、公开布局持久化 codec，
   同时把任意 CSS 注入和 smoke-only Panel 快照移出公共合同。生产 Shell
   Renderer 已改为压缩的 React production build。
+- `0.2.0-alpha.5` 修复稳定 Tab Strip 抢占 pointer capture 后普通点击不再
+  到达标签的问题；普通点击改由同一手势状态机明确激活，拖动换位使用 FLIP
+  让相邻标签平滑让位，取消时平滑归位，并恢复桌面 Dock 的箭头指针和底部
+  标签轮廓。真实 Electron 指针 smoke 会在换位后再次点击两个标签来回切换。
 - 面板公开 preload 的 `getPanelState()` / `onPanelStateChanged()` 包含
   host、active、requestedVisible、实际 visible 和 WebContents ID；
   工作区隐藏或交互禁用时，

@@ -175,29 +175,33 @@ button:hover {
 
 .dock-tab {
   min-width: var(--electron-dock-tab-minimum-width, 76px);
-  height: 100%;
+  height: calc(100% - 3px);
+  margin: 0 2px 3px;
   padding: 0 var(--electron-dock-tab-padding-inline, 14px);
-  border: 0;
+  border: 1px solid var(--electron-dock-tabbar-border-color, #2b3332);
+  border-top-color: var(--electron-dock-tabbar-top-border-color, #2b3332);
   border-radius:
-    var(--electron-dock-tab-border-radius, 3px)
-    var(--electron-dock-tab-border-radius, 3px)
     0
-    0;
+    0
+    var(--electron-dock-tab-border-radius, 3px)
+    var(--electron-dock-tab-border-radius, 3px);
   background: var(--electron-dock-tab-background, transparent);
   color: var(--electron-dock-tab-foreground, #82908e);
-  cursor: grab;
+  cursor: default;
   font-size: var(--electron-dock-tab-font-size, 12px);
   font-weight: var(--electron-dock-tab-font-weight, 400);
 }
 
 .dock-tab:hover {
-  border: 0;
+  border-color: var(--electron-dock-tabbar-border-color, #2b3332);
+  border-top-color: var(--electron-dock-tabbar-top-border-color, #2b3332);
   background: var(--electron-dock-tab-hover-background, #1c2422);
   color: var(--electron-dock-tab-hover-foreground, #cbd5d3);
 }
 
 .dock-tab--active,
 .dock-tab--active:hover {
+  border-top-color: var(--electron-dock-tab-active-background, #234d45);
   background: var(--electron-dock-tab-active-background, #234d45);
   color: var(--electron-dock-tab-active-foreground, #00ffcc);
 }
@@ -206,7 +210,7 @@ button:hover {
 .dock-tab--reordering:hover {
   position: relative;
   z-index: 1;
-  cursor: grabbing;
+  cursor: default;
 }
 
 .dock-splitter {

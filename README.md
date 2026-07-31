@@ -6,7 +6,7 @@
 
 > **当前成熟度：Alpha / Technology Preview**
 >
-> `0.2.0-alpha.4` 已适合固定精确版本进行集成和反馈，但公共 API、跨版本迁移、
+> `0.2.0-alpha.5` 已适合固定精确版本进行集成和反馈，但公共 API、跨版本迁移、
 > 键盘无障碍和多屏人工验收尚未冻结。它不是稳定版，也不是 Qt
 > `QDockWidget` 的完整跨平台替代。
 
@@ -37,13 +37,15 @@ Electron Dock 的边界是：
 | Panel preload | CommonJS |
 | macOS / Linux / Windows arm64 | 暂不支持 |
 
-## Alpha.4 已具备的能力
+## Alpha.5 已具备的能力
 
 - 挂入已有 `BrowserWindow`，或创建完整的独立 Dock 窗口。
 - 水平/垂直嵌套分割、中心标签合并、四边局部分割和工作区外沿停靠。
 - 停靠面板一次拖出为真实浮窗，浮窗再次拖回停靠区。
 - 同一标签组内拖动标签换位：4 DIP 曼哈顿阈值、实时顺序预览、
-  `Esc`/取消回滚、释放后持久化。
+  邻项平滑让位、`Esc`/取消回滚、释放后持久化。
+- 标签普通点击与拖动手势由同一指针状态机判定；拖动换位后仍可直接切换
+  任一标签，标签区域保持桌面 Dock 惯用的箭头指针。
 - 标签切换、面板显隐、浮出/回停、Splitter 比例调整和布局重置。
 - 版本化布局持久化、原子文件替换、损坏/未知版本回退。
 - 结构化 Shell 外观 API，不需要访问私有 Shell 页面或注入 CSS。
@@ -62,7 +64,7 @@ Electron Dock 的边界是：
 当前公开渠道是不可变 GitHub Alpha 标签：
 
 ```powershell
-npm install "github:tools-qweer/Electron-Dock#v0.2.0-alpha.4" electron@^43.1.1
+npm install "github:tools-qweer/Electron-Dock#v0.2.0-alpha.5" electron@^43.1.1
 ```
 
 Alpha 阶段请固定精确标签或版本，不要依赖 `main` 或其他会移动的分支。
@@ -196,7 +198,7 @@ owner.once("closed", () => {
 ## Shell 外观
 
 不要扫描库内 Shell URL、访问私有 `WebContents` 或向 `.dock-*` 类注入 CSS。
-Alpha.4 提供结构化外观合同：
+当前版本提供结构化外观合同：
 
 ```ts
 const workspace = await runtime.attachWorkspace({

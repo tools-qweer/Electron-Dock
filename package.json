@@ -1,6 +1,6 @@
 {
   "name": "@tools-qweer/electron-dock",
-  "version": "0.2.0-alpha.4",
+  "version": "0.2.0-alpha.5",
   "description": "Windows x64 native docking primitives for Electron WebContentsView panels.",
   "license": "MIT",
   "author": "tools-qweer contributors",

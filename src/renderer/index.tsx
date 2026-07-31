@@ -1,5 +1,6 @@
 import React, {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -21,7 +22,9 @@ import {
   completeTabReorderSession,
   createTabReorderSession,
   reorderPanelIds,
+  resolveTabFlipTranslations,
   updateTabReorderSession,
+  type TabInlinePosition,
   type TabReorderSession,
 } from "./tab-reorder.js";
 import {
@@ -40,6 +43,8 @@ const shellHeaderHeight = Math.max(
 // Qt uses Manhattan distance for drag activation rather than Euclidean
 // distance, which matters most during diagonal movement.
 const DOCK_DRAG_START_DISTANCE_DIP = 10;
+const TAB_REORDER_ANIMATION_DURATION_MS = 150;
+const TAB_REORDER_ANIMATION_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 
 document.documentElement.dataset.mode = mode;
 if (mode === "shell") {
@@ -229,11 +234,60 @@ function DockTabStrip({
   const pendingTimerRef = useRef<number | null>(null);
   const suppressClickRef = useRef<string | null>(null);
   const cancelDragRef = useRef<(() => void) | null>(null);
+  const flipOriginRef = useRef<readonly TabInlinePosition[] | null>(null);
+  const tabAnimationsRef = useRef(new Map<string, Animation>());
   const [previewOrder, setPreviewOrder] = useState<readonly string[] | null>(
     null,
   );
   const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null);
   const displayedPanelIds = previewOrder ?? geometry.panelIds;
+
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    const before = flipOriginRef.current;
+    flipOriginRef.current = null;
+    if (
+      strip === null
+      || before === null
+      || window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+    const elements = new Map(
+      Array.from(strip.querySelectorAll<HTMLElement>(".dock-tab"))
+        .flatMap((element) => {
+          const panelId = element.dataset.panelId;
+          return panelId === undefined ? [] : [[panelId, element] as const];
+        }),
+    );
+    const after = readTabInlinePositions(strip);
+    for (const { panelId, translateX } of resolveTabFlipTranslations(
+      before,
+      after,
+    )) {
+      const element = elements.get(panelId);
+      if (element === undefined) continue;
+      tabAnimationsRef.current.get(panelId)?.cancel();
+      const animation = element.animate(
+        [
+          { transform: `translateX(${String(translateX)}px)` },
+          { transform: "translateX(0)" },
+        ],
+        {
+          duration: TAB_REORDER_ANIMATION_DURATION_MS,
+          easing: TAB_REORDER_ANIMATION_EASING,
+        },
+      );
+      tabAnimationsRef.current.set(panelId, animation);
+      const forget = (): void => {
+        if (tabAnimationsRef.current.get(panelId) === animation) {
+          tabAnimationsRef.current.delete(panelId);
+        }
+      };
+      animation.addEventListener("finish", forget, { once: true });
+      animation.addEventListener("cancel", forget, { once: true });
+    }
+  }, [displayedPanelIds]);
 
   useEffect(() => {
     const pending = pendingOrderRef.current;
@@ -252,7 +306,18 @@ function DockTabStrip({
     if (pendingTimerRef.current !== null) {
       window.clearTimeout(pendingTimerRef.current);
     }
+    for (const animation of tabAnimationsRef.current.values()) {
+      animation.cancel();
+    }
+    tabAnimationsRef.current.clear();
   }, []);
+
+  const captureFlipOrigin = (): void => {
+    const strip = stripRef.current;
+    flipOriginRef.current = strip === null
+      ? null
+      : readTabInlinePositions(strip);
+  };
 
   const beginReorder = (
     event: React.PointerEvent<HTMLButtonElement>,
@@ -278,8 +343,6 @@ function DockTabStrip({
     const initialOrder = [...displayedPanelIds];
     sessionRef.current = session;
     previewOrderRef.current = initialOrder;
-    setPreviewOrder(initialOrder);
-    setDraggingPanelId(panelId);
 
     const cleanup = (cancelled: boolean): void => {
       if (finished) return;
@@ -302,6 +365,7 @@ function DockTabStrip({
       const completion = completeTabReorderSession(session, cancelled);
       if (completion.targetIndex === null) {
         previewOrderRef.current = null;
+        captureFlipOrigin();
         setPreviewOrder(null);
       } else {
         const committedOrder = previewOrderRef.current ?? initialOrder;
@@ -319,11 +383,19 @@ function DockTabStrip({
           pendingOrderRef.current = null;
           previewOrderRef.current = null;
           pendingTimerRef.current = null;
+          captureFlipOrigin();
           setPreviewOrder(null);
         }, 750);
       }
 
-      if (completion.suppressClick) {
+      const activatesClick = !cancelled && !session.started;
+      if (activatesClick) {
+        window.electronDock.setActivePanel({
+          tabsNodeId: geometry.tabsNodeId,
+          panelId,
+        });
+      }
+      if (completion.suppressClick || activatesClick) {
         suppressClickRef.current = panelId;
         window.setTimeout(() => {
           if (suppressClickRef.current === panelId) {
@@ -351,6 +423,7 @@ function DockTabStrip({
       );
       sessionRef.current = session;
       if (!previous.started && session.started) {
+        setDraggingPanelId(panelId);
         window.electronDock.setActivePanel({
           tabsNodeId: geometry.tabsNodeId,
           panelId,
@@ -363,6 +436,7 @@ function DockTabStrip({
           session.currentIndex,
         );
         previewOrderRef.current = nextOrder;
+        captureFlipOrigin();
         setPreviewOrder(nextOrder);
       }
       if (session.started) pointerEvent.preventDefault();
@@ -444,6 +518,21 @@ function samePanelOrder(
 ): boolean {
   return first.length === second.length
     && first.every((panelId, index) => panelId === second[index]);
+}
+
+function readTabInlinePositions(
+  strip: HTMLElement,
+): readonly TabInlinePosition[] {
+  return Array.from(
+    strip.querySelectorAll<HTMLElement>(".dock-tab"),
+  ).flatMap((element) => {
+    const panelId = element.dataset.panelId;
+    if (panelId === undefined) return [];
+    return [{
+      panelId,
+      left: element.getBoundingClientRect().left,
+    }];
+  });
 }
 
 interface DockSplitterProps {
