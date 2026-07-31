@@ -14,6 +14,16 @@ export interface TabReorderCompletion {
   readonly suppressClick: boolean;
 }
 
+export interface TabInlinePosition {
+  readonly panelId: string;
+  readonly left: number;
+}
+
+export interface TabFlipTranslation {
+  readonly panelId: string;
+  readonly translateX: number;
+}
+
 export function createTabReorderSession(
   panelId: string,
   startX: number,
@@ -84,6 +94,31 @@ export function reorderPanelIds(
   return reordered;
 }
 
+/**
+ * Computes the inverse horizontal offsets used by a FLIP animation after the
+ * tab DOM order changes. Missing, invalid and stationary entries are ignored
+ * so a renderer can safely reuse this for cancellation and authority echoes.
+ */
+export function resolveTabFlipTranslations(
+  before: readonly TabInlinePosition[],
+  after: readonly TabInlinePosition[],
+): readonly TabFlipTranslation[] {
+  const beforeByPanel = new Map(
+    before
+      .filter(validTabInlinePosition)
+      .map((entry) => [entry.panelId, entry.left] as const),
+  );
+  return after.flatMap((entry) => {
+    if (!validTabInlinePosition(entry)) return [];
+    const previousLeft = beforeByPanel.get(entry.panelId);
+    if (previousLeft === undefined) return [];
+    const translateX = previousLeft - entry.left;
+    return Math.abs(translateX) < 0.5
+      ? []
+      : [{ panelId: entry.panelId, translateX }];
+  });
+}
+
 function resolveTabReorderTargetIndex(
   clientX: number,
   currentIndex: number,
@@ -107,4 +142,10 @@ function resolveTabReorderTargetIndex(
     targetIndex -= 1;
   }
   return targetIndex;
+}
+
+function validTabInlinePosition(
+  value: TabInlinePosition,
+): boolean {
+  return value.panelId.length > 0 && Number.isFinite(value.left);
 }

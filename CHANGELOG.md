@@ -6,6 +6,19 @@ The project follows [Semantic Versioning](https://semver.org/) and publishes
 immutable Alpha prereleases while its public API and Windows interaction
 contract are still being validated.
 
+## [0.2.0-alpha.5] - 2026-07-31
+
+### Fixed
+
+- Kept an ordinary tab click authoritative even though the stable tab-strip
+  owns pointer capture, so tabs remain switchable before and after reordering.
+- Added FLIP-based live tab displacement and cancellation animation instead of
+  jumping directly between DOM positions.
+- Restored desktop-style arrow cursors and source-like bottom-tab borders,
+  spacing, and lower corner rounding.
+- Extended the real Electron pointer smoke to verify animation, cursor style,
+  persisted reorder, and a Story-to-Map click round trip after the drag.
+
 ## [0.2.0-alpha.4] - 2026-07-31
 
 ### Added
@@ -81,6 +94,7 @@ contract are still being validated.
 - Narrow public panel preload, private Shell preload, native Windows drag
   helper, package contract checks, and end-to-end reparenting smoke tests.
 
+[0.2.0-alpha.5]: https://github.com/tools-qweer/Electron-Dock/compare/v0.2.0-alpha.4...v0.2.0-alpha.5
 [0.2.0-alpha.4]: https://github.com/tools-qweer/Electron-Dock/compare/v0.2.0-alpha.3...v0.2.0-alpha.4
 [0.2.0-alpha.3]: https://github.com/tools-qweer/Electron-Dock/compare/v0.2.0-alpha.2...v0.2.0-alpha.3
 [0.2.0-alpha.2]: https://github.com/tools-qweer/Electron-Dock/compare/v0.2.0-alpha.1...v0.2.0-alpha.2

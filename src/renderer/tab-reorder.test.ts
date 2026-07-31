@@ -3,6 +3,7 @@ import {
   completeTabReorderSession,
   createTabReorderSession,
   reorderPanelIds,
+  resolveTabFlipTranslations,
   updateTabReorderSession,
 } from "./tab-reorder.js";
 
@@ -69,5 +70,36 @@ describe("Dock tab reorder gesture", () => {
       targetIndex: null,
       suppressClick: false,
     });
+  });
+
+  it("computes stable FLIP offsets for every tab displaced by a preview reorder", () => {
+    expect(resolveTabFlipTranslations(
+      [
+        { panelId: "story", left: 12 },
+        { panelId: "map", left: 96 },
+        { panelId: "inspector", left: 180 },
+      ],
+      [
+        { panelId: "map", left: 12 },
+        { panelId: "story", left: 96 },
+        { panelId: "inspector", left: 180 },
+      ],
+    )).toEqual([
+      { panelId: "map", translateX: 84 },
+      { panelId: "story", translateX: -84 },
+    ]);
+  });
+
+  it("ignores missing, invalid and sub-pixel stationary FLIP entries", () => {
+    expect(resolveTabFlipTranslations(
+      [
+        { panelId: "story", left: 10 },
+        { panelId: "invalid", left: Number.NaN },
+      ],
+      [
+        { panelId: "story", left: 10.4 },
+        { panelId: "map", left: 80 },
+      ],
+    )).toEqual([]);
   });
 });
