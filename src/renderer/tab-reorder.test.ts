@@ -3,13 +3,14 @@ import {
   completeTabReorderSession,
   createTabReorderSession,
   reorderPanelIds,
+  resolveDraggedTabTranslateX,
   resolveTabFlipTranslations,
   updateTabReorderSession,
 } from "./tab-reorder.js";
 
 describe("Dock tab reorder gesture", () => {
   it("waits for four DIP of Manhattan movement before starting", () => {
-    const initial = createTabReorderSession("map", 120, 30, 1);
+    const initial = createTabReorderSession("map", 120, 30, 1, 100);
 
     expect(
       updateTabReorderSession(initial, 122, 31, [50, 150, 250]),
@@ -26,7 +27,7 @@ describe("Dock tab reorder gesture", () => {
   });
 
   it("moves across adjacent tab midpoints in either direction", () => {
-    const initial = createTabReorderSession("story", 40, 20, 0);
+    const initial = createTabReorderSession("story", 40, 20, 0, 10);
     const movedRight = updateTabReorderSession(
       initial,
       260,
@@ -49,8 +50,21 @@ describe("Dock tab reorder gesture", () => {
       .toEqual(["map", "inspector", "story"]);
   });
 
+  it("keeps the grabbed point under the pointer when the preview slot moves", () => {
+    const initial = createTabReorderSession("map", 140, 20, 1, 100);
+    const moved = updateTabReorderSession(
+      initial,
+      205,
+      20,
+      [50, 150, 250],
+    );
+
+    expect(resolveDraggedTabTranslateX(moved, 100)).toBe(65);
+    expect(resolveDraggedTabTranslateX(moved, 180)).toBe(-15);
+  });
+
   it("commits only a changed completed drag and suppresses its trailing click", () => {
-    const initial = createTabReorderSession("map", 140, 20, 1);
+    const initial = createTabReorderSession("map", 140, 20, 1, 100);
     const moved = updateTabReorderSession(
       initial,
       40,

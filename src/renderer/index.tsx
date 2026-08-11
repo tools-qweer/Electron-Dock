@@ -22,6 +22,7 @@ import {
   completeTabReorderSession,
   createTabReorderSession,
   reorderPanelIds,
+  resolveDraggedTabTranslateX,
   resolveTabFlipTranslations,
   updateTabReorderSession,
   type TabInlinePosition,
@@ -236,11 +237,43 @@ function DockTabStrip({
   const cancelDragRef = useRef<(() => void) | null>(null);
   const flipOriginRef = useRef<readonly TabInlinePosition[] | null>(null);
   const tabAnimationsRef = useRef(new Map<string, Animation>());
+  const dragTranslationRef = useRef<{
+    readonly panelId: string;
+    readonly translateX: number;
+  } | null>(null);
   const [previewOrder, setPreviewOrder] = useState<readonly string[] | null>(
     null,
   );
   const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null);
   const displayedPanelIds = previewOrder ?? geometry.panelIds;
+
+  const findTabElement = (panelId: string): HTMLElement | null => {
+    const strip = stripRef.current;
+    if (strip === null) return null;
+    return Array.from(strip.querySelectorAll<HTMLElement>(".dock-tab"))
+      .find((element) => element.dataset.panelId === panelId) ?? null;
+  };
+
+  const clearDraggedTabTranslation = (): void => {
+    const previous = dragTranslationRef.current;
+    dragTranslationRef.current = null;
+    if (previous === null) return;
+    findTabElement(previous.panelId)?.style.removeProperty("translate");
+  };
+
+  const positionDraggedTab = (session: TabReorderSession): void => {
+    const element = findTabElement(session.panelId);
+    if (element === null) return;
+    tabAnimationsRef.current.get(session.panelId)?.cancel();
+    const previous = dragTranslationRef.current;
+    const previousTranslateX = previous?.panelId === session.panelId
+      ? previous.translateX
+      : 0;
+    const slotLeft = element.getBoundingClientRect().left - previousTranslateX;
+    const translateX = resolveDraggedTabTranslateX(session, slotLeft);
+    element.style.setProperty("translate", `${String(translateX)}px 0`);
+    dragTranslationRef.current = { panelId: session.panelId, translateX };
+  };
 
   useLayoutEffect(() => {
     const strip = stripRef.current;
@@ -267,6 +300,10 @@ function DockTabStrip({
     )) {
       const element = elements.get(panelId);
       if (element === undefined) continue;
+      if (panelId === draggingPanelId) {
+        tabAnimationsRef.current.get(panelId)?.cancel();
+        continue;
+      }
       tabAnimationsRef.current.get(panelId)?.cancel();
       const animation = element.animate(
         [
@@ -287,7 +324,12 @@ function DockTabStrip({
       animation.addEventListener("finish", forget, { once: true });
       animation.addEventListener("cancel", forget, { once: true });
     }
-  }, [displayedPanelIds]);
+  }, [displayedPanelIds, draggingPanelId]);
+
+  useLayoutEffect(() => {
+    const session = sessionRef.current;
+    if (session?.started === true) positionDraggedTab(session);
+  }, [displayedPanelIds, draggingPanelId]);
 
   useEffect(() => {
     const pending = pendingOrderRef.current;
@@ -338,6 +380,7 @@ function DockTabStrip({
       event.clientX,
       event.clientY,
       sourceIndex,
+      event.currentTarget.getBoundingClientRect().left,
     );
     let finished = false;
     const initialOrder = [...displayedPanelIds];
@@ -357,6 +400,7 @@ function DockTabStrip({
       window.removeEventListener("keydown", handleKeyDown, true);
       cancelDragRef.current = null;
       sessionRef.current = null;
+      clearDraggedTabTranslation();
       setDraggingPanelId(null);
       if (captureOwner.hasPointerCapture(pointerId)) {
         captureOwner.releasePointerCapture(pointerId);
@@ -439,6 +483,7 @@ function DockTabStrip({
         captureFlipOrigin();
         setPreviewOrder(nextOrder);
       }
+      if (session.started) positionDraggedTab(session);
       if (session.started) pointerEvent.preventDefault();
     };
 

@@ -437,19 +437,31 @@ async function runTabReorderPointerSmoke(
     x: Math.round(story.x + story.width / 2 - 2),
     y: start.y,
   };
+  const follow = {
+    x: start.x - Math.min(20, Math.max(6, Math.round(map.width / 4))),
+    y: start.y,
+  };
   const readDomState = (): Promise<unknown> => shell.executeJavaScript(`
-    ({
-      order: Array.from(document.querySelectorAll(".dock-tab"))
-        .map((element) => element.dataset.panelId),
-      reordering: document.querySelector(".dock-tab--reordering")
-        ?.dataset.panelId ?? null,
-      active: document.querySelector(".dock-tab--active")
-        ?.dataset.panelId ?? null,
-      animationCount: Array.from(document.querySelectorAll(".dock-tab"))
-        .reduce((count, element) => count + element.getAnimations()
-          .filter((animation) => animation.playState === "running").length, 0),
-      cursor: getComputedStyle(document.querySelector(".dock-tab")).cursor,
-    });
+    (() => {
+      const tabs = Array.from(document.querySelectorAll(".dock-tab"));
+      const reordering = document.querySelector(".dock-tab--reordering");
+      const reorderingBounds = reordering?.getBoundingClientRect();
+      return {
+        order: tabs.map((element) => element.dataset.panelId),
+        reordering: reordering?.dataset.panelId ?? null,
+        reorderingLeft: reorderingBounds?.left ?? null,
+        active: document.querySelector(".dock-tab--active")
+          ?.dataset.panelId ?? null,
+        animationCount: tabs.reduce((count, element) => count
+          + element.getAnimations()
+            .filter((animation) => animation.playState === "running").length, 0),
+        inlineTranslations: tabs.map((element) => ({
+          panelId: element.dataset.panelId,
+          translate: element.style.translate,
+        })),
+        cursor: getComputedStyle(document.querySelector(".dock-tab")).cursor,
+      };
+    })();
   `);
   const readTabCenter = async (
     panelId: string,
@@ -484,6 +496,7 @@ async function runTabReorderPointerSmoke(
   const debuggerWasAttached = shell.debugger.isAttached();
   if (!debuggerWasAttached) shell.debugger.attach("1.3");
   let pointerDownState: unknown;
+  let pointerFollowState: unknown;
   let pointerMoveState: unknown;
   let pointerUpState: unknown;
   let storyClickState: unknown;
@@ -500,6 +513,14 @@ async function runTabReorderPointerSmoke(
     });
     await delay(40);
     pointerDownState = await readDomState();
+    await shell.debugger.sendCommand("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      ...follow,
+      button: "left",
+      buttons: 1,
+    });
+    await delay(40);
+    pointerFollowState = await readDomState();
     await shell.debugger.sendCommand("Input.dispatchMouseEvent", {
       type: "mouseMoved",
       ...destination,
@@ -573,20 +594,46 @@ async function runTabReorderPointerSmoke(
     readonly animationCount?: unknown;
     readonly cursor?: unknown;
   };
+  const releaseEvidence = pointerUpState as {
+    readonly reordering?: unknown;
+    readonly inlineTranslations?: unknown;
+  };
+  const expectedLeft = (pointerX: number): number => (
+    pointerX - (start.x - map.x)
+  );
+  const followsPointer = (value: unknown, pointerX: number): boolean => {
+    if (typeof value !== "object" || value === null) return false;
+    const reordering = Reflect.get(value, "reordering");
+    const reorderingLeft = Reflect.get(value, "reorderingLeft");
+    return reordering === "map-scene"
+      && typeof reorderingLeft === "number"
+      && Math.abs(reorderingLeft - expectedLeft(pointerX)) <= 1.5;
+  };
   const passed = tabs?.activePanelId === "map-scene"
     && tabs.panelIds[0] === "map-scene"
     && tabs.panelIds[1] === "story-scene"
     && storyClickActivated
     && mapClickActivated
+    && followsPointer(pointerFollowState, follow.x)
+    && followsPointer(pointerMoveState, destination.x)
     && typeof moveEvidence.animationCount === "number"
     && moveEvidence.animationCount > 0
-    && moveEvidence.cursor === "default";
+    && moveEvidence.cursor === "default"
+    && releaseEvidence.reordering === null
+    && Array.isArray(releaseEvidence.inlineTranslations)
+    && releaseEvidence.inlineTranslations.every((entry) => (
+      typeof entry === "object"
+      && entry !== null
+      && Reflect.get(entry, "translate") === ""
+    ));
   if (!passed) {
     process.stderr.write(`TAB_REORDER_SMOKE_DIAGNOSTIC ${JSON.stringify({
       entries,
       start,
+      follow,
       destination,
       pointerDownState,
+      pointerFollowState,
       pointerMoveState,
       pointerUpState,
       storyClickState,

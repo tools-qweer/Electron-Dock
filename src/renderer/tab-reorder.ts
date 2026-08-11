@@ -4,6 +4,8 @@ export interface TabReorderSession {
   readonly panelId: string;
   readonly startX: number;
   readonly startY: number;
+  readonly grabOffsetX: number;
+  readonly pointerX: number;
   readonly originalIndex: number;
   readonly currentIndex: number;
   readonly started: boolean;
@@ -29,11 +31,14 @@ export function createTabReorderSession(
   startX: number,
   startY: number,
   sourceIndex: number,
+  tabLeft: number,
 ): TabReorderSession {
   return {
     panelId,
     startX,
     startY,
+    grabOffsetX: startX - tabLeft,
+    pointerX: startX,
     originalIndex: sourceIndex,
     currentIndex: sourceIndex,
     started: false,
@@ -56,8 +61,31 @@ export function updateTabReorderSession(
     session.currentIndex,
     tabCenters,
   );
-  if (session.started && currentIndex === session.currentIndex) return session;
-  return { ...session, started: true, currentIndex };
+  return {
+    ...session,
+    pointerX: clientX,
+    started: true,
+    currentIndex,
+  };
+}
+
+/**
+ * Keeps the original horizontal grab point under the pointer even when a
+ * preview reorder moves the tab's untransformed layout slot.
+ */
+export function resolveDraggedTabTranslateX(
+  session: TabReorderSession,
+  slotLeft: number,
+): number {
+  if (
+    !session.started
+    || !Number.isFinite(session.pointerX)
+    || !Number.isFinite(session.grabOffsetX)
+    || !Number.isFinite(slotLeft)
+  ) {
+    return 0;
+  }
+  return session.pointerX - session.grabOffsetX - slotLeft;
 }
 
 export function completeTabReorderSession(

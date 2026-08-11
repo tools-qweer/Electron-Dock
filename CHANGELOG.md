@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/) and publishes
 immutable Alpha prereleases while its public API and Windows interaction
 contract are still being validated.
 
+## [Unreleased]
+
+### Fixed
+
+- Kept the grabbed point of a reordered tab continuously under the pointer
+  while neighboring tabs retain their existing FLIP displacement animation.
+
 ## [0.2.0-alpha.5] - 2026-07-31
 
 ### Fixed
