@@ -15,6 +15,7 @@ interface BrowserWindowDouble {
 }
 
 interface WorkspaceDouble {
+  readonly options: import("./dock-workspace-host.js").DockWorkspaceHostOptions;
   disposed: boolean;
   readonly shellWebContentsId: number;
   readonly panelWebContents: {
@@ -395,7 +396,7 @@ vi.mock("./resources.js", () => ({
   }),
 }));
 
-import { BrowserWindow } from "electron";
+import { BrowserWindow, type NativeImage } from "electron";
 import {
   createElectronDockRuntime,
   type ElectronDockRuntime,
@@ -428,6 +429,21 @@ afterEach(async () => {
 });
 
 describe("ElectronDockRuntime attachWorkspace", () => {
+  it("keeps floating icons in Main and out of shell panel definitions and snapshots", async () => {
+    const options = baseOptions("icons");
+    const icon = { toPNG: () => Buffer.from("native-image") };
+    const workspace = await runtime!.attachWorkspace({
+      ...options,
+      panels: options.panels.map(panel => ({ ...panel, floatingWindowIcon: icon as unknown as NativeImage })),
+      window: new BrowserWindow(),
+      bounds: { x: 0, y: 0, width: 500, height: 400 },
+    });
+    const internalOptions = testState.workspaces[0]!.options;
+    expect(internalOptions.panelWindowIcons?.panel).toBe(icon);
+    expect(internalOptions.panels[0]).not.toHaveProperty("floatingWindowIcon");
+    expect(JSON.stringify(workspace.snapshot())).not.toContain("floatingWindowIcon");
+  });
+
   it("serves panel state during the panel's first load before publication", async () => {
     let firstScreenState: unknown;
     testState.workspaceLoadHook = (loadingWorkspace) => {

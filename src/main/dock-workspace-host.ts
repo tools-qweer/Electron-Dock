@@ -3,6 +3,7 @@ import {
   screen,
   WebContentsView,
   type WebContents,
+  type NativeImage,
 } from "electron";
 import { pathToFileURL } from "node:url";
 import {
@@ -84,6 +85,7 @@ export interface DockWorkspaceHostOptions {
   readonly panelContents?: Readonly<
     Record<PanelId, DockPanelContentOptions | undefined>
   >;
+  readonly panelWindowIcons?: Readonly<Record<PanelId, NativeImage | string | undefined>>;
   /**
    * An application-owned adapter takes precedence over `layoutFilePath`.
    * Supplying neither keeps persistence disabled.
@@ -139,6 +141,7 @@ export class DockWorkspaceHost {
   readonly #panelContents: Readonly<
     Record<PanelId, DockPanelContentOptions | undefined>
   >;
+  readonly #panelWindowIcons: NonNullable<DockWorkspaceHostOptions["panelWindowIcons"]>;
   readonly #storage: AtomicLayoutTextStorageContract | undefined;
   readonly #panelMinimumSizes: Readonly<
     Record<PanelId, DockPanelMinimumSize | undefined>
@@ -227,6 +230,7 @@ export class DockWorkspaceHost {
     this.#preloadPath = options.preloadPath;
     this.#rendererHtmlPath = options.rendererHtmlPath;
     this.#panelContents = options.panelContents ?? {};
+    this.#panelWindowIcons = options.panelWindowIcons ?? {};
     this.#storage = options.storage
       ?? (
         options.layoutFilePath === undefined
@@ -372,6 +376,9 @@ export class DockWorkspaceHost {
           mainWindow: this.#mainWindow,
           preloadPath: this.#preloadPath,
           rendererHtmlPath: this.#rendererHtmlPath,
+          ...(this.#panelWindowIcons[definition.id] === undefined ? {} : {
+            floatingWindowIcon: this.#panelWindowIcons[definition.id]!,
+          }),
         };
         const host = new DockPanelHost(
           content === undefined

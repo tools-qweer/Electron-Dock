@@ -6,6 +6,7 @@ import {
   WebContentsView,
   type Rectangle,
   type WebPreferences,
+  type NativeImage,
 } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -21,6 +22,7 @@ import {
 export interface DockPanelHostOptions {
   readonly panelId: string;
   readonly title: string;
+  readonly floatingWindowIcon?: NativeImage | string;
   readonly mainWindow: BrowserWindow;
   readonly preloadPath: string;
   readonly rendererHtmlPath: string;
@@ -76,6 +78,7 @@ export interface FloatPanelOptions {
 export class DockPanelHost {
   readonly #panelId: string;
   readonly #title: string;
+  readonly #floatingWindowIcon: NativeImage | string | undefined;
   readonly #mainWindow: BrowserWindow;
   readonly #view: WebContentsView;
   readonly #rendererUrl: string;
@@ -92,6 +95,7 @@ export class DockPanelHost {
   constructor(options: DockPanelHostOptions) {
     this.#panelId = options.panelId;
     this.#title = options.title;
+    this.#floatingWindowIcon = options.floatingWindowIcon;
     this.#mainWindow = options.mainWindow;
     let rendererUrl: string;
     if (options.content === undefined) {
@@ -286,6 +290,7 @@ export class DockPanelHost {
     try {
       floatingWindow = new BaseWindow({
         title: this.#title,
+        ...(this.#floatingWindowIcon === undefined ? {} : { icon: this.#floatingWindowIcon }),
         x: targetBounds.x,
         y: targetBounds.y,
         width: Math.max(240, targetBounds.width),

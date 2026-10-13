@@ -5,6 +5,7 @@ import {
   type BrowserWindowConstructorOptions,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
+  type NativeImage,
   type WebContents,
 } from "electron";
 import type { DockLayoutGeometry } from "../core/layout-geometry.js";
@@ -43,6 +44,8 @@ import {
 } from "./resources.js";
 
 export interface ElectronDockPanelDefinition extends DockPanelDefinition {
+  /** Main-only native icon for this panel's detached window. Not persisted or sent to renderers. */
+  readonly floatingWindowIcon?: NativeImage | string;
   /**
    * Consumer-owned page rendered inside this panel. If omitted, the bundled
    * diagnostic panel is used; production consumers should normally provide it.
@@ -761,8 +764,10 @@ class ElectronDockWorkspaceImpl implements ElectronDockWorkspace {
       string,
       DockPanelContentOptions | undefined
     > = {};
+    const panelWindowIcons: Record<string, NativeImage | string | undefined> = {};
     for (const panel of options.panels) {
       panelContents[panel.id] = panel.content;
+      panelWindowIcons[panel.id] = panel.floatingWindowIcon;
     }
     const workspaceOptions = {
       mainWindow: options.window,
@@ -771,6 +776,7 @@ class ElectronDockWorkspaceImpl implements ElectronDockWorkspace {
       preloadPath: resources.internalPreloadPath,
       rendererHtmlPath: resources.rendererHtmlPath,
       panelContents,
+      panelWindowIcons,
       shellView: {
         bounds: options.bounds,
         headerHeight: options.shellHeaderHeight ?? 0,

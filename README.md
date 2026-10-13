@@ -95,6 +95,11 @@ exposeElectronDockPreloadApi("electronDock");
 
 ### 2. 在 Main 中挂入工作区
 
+每个 `ElectronDockPanelDefinition` 可传入 `floatingWindowIcon`（绝对图片路径或
+Electron `NativeImage`），用于该面板独立窗口的原生标题栏图标；Windows 推荐多尺寸 ICO。
+省略时沿用 Electron 默认图标。图标由消费端 Main 提供，库不会把路径或图片传到 Renderer、
+保存到布局文件，或修改宿主窗口图标；重新拖出和恢复浮动布局时沿用同一配置。
+
 ```ts
 import { app, BrowserWindow } from "electron";
 import path from "node:path";
