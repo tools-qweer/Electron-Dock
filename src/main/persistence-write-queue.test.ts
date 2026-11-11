@@ -36,4 +36,31 @@ describe("PersistenceWriteQueue", () => {
 
     await expect(queue.flush()).rejects.toBeUndefined();
   });
+
+  it("retries the latest full layout once per flush and shares an in-flight retry", async () => {
+    const failure = new Error("config file is locked");
+    const save = vi.fn<() => Promise<void>>()
+      .mockRejectedValueOnce(failure)
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue(undefined);
+    const queue = new PersistenceWriteQueue(() => {});
+    queue.enqueue(save);
+    await expect(queue.flush()).rejects.toBe(failure);
+    await expect(queue.flush()).rejects.toBe(failure);
+    await Promise.all([queue.flush(), queue.flush()]);
+    await queue.flush();
+    expect(save).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not replay a failed layout after a newer layout is queued", async () => {
+    const queue = new PersistenceWriteQueue(() => {});
+    const stale = vi.fn(() => Promise.reject(new Error("locked")));
+    const latest = vi.fn();
+    queue.enqueue(stale);
+    await expect(queue.flush()).rejects.toThrow("locked");
+    queue.enqueue(latest);
+    await queue.flush();
+    expect(stale).toHaveBeenCalledTimes(1);
+    expect(latest).toHaveBeenCalledTimes(1);
+  });
 });
